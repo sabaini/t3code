@@ -3,6 +3,7 @@ import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceSourcesSettings } from "./DeviceSourcesSettings";
+import { MachinesSettings } from "./MachinesSettings";
 import {
   AuthSettingsWriteScope,
   BrowserImportFailureReason,
@@ -1615,6 +1616,7 @@ export function DevicesSettingsPanel() {
   return (
     <SettingsPageContainer>
       <DeviceIntegrationSettings />
+      <MachinesSettings />
     </SettingsPageContainer>
   );
 }

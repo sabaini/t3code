@@ -348,7 +348,8 @@ export const layerWithOptions = (
       const agentScope = yield* AgentScope;
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
-          if (Option.isNone(serverSettings)) return { browser: true, device: false };
+          if (Option.isNone(serverSettings))
+            return { browser: true, device: false, machines: false };
           return yield* Effect.gen(function* () {
             const settings = yield* serverSettings.value.getSettings;
             const thread = yield* projectionStore.getThread(threadId);
@@ -359,7 +360,10 @@ export const layerWithOptions = (
             const deviceOverridden = entries.some(
               (entry) => entry.enableAgentDeviceAccess !== undefined,
             );
-            if (browserOverridden || deviceOverridden) {
+            const machinesOverridden = entries.some(
+              (entry) => entry.enableAgentMachineAccess !== undefined,
+            );
+            if (browserOverridden || deviceOverridden || machinesOverridden) {
               const project = Option.isSome(projectService)
                 ? yield* projectService.value.getById(thread.projectId)
                 : Option.none();
@@ -367,19 +371,21 @@ export const layerWithOptions = (
                 return {
                   browser: browserOverridden ? false : settings.enableAgentBrowserAccess,
                   device: deviceOverridden ? false : settings.enableAgentDeviceAccess,
+                  machines: machinesOverridden ? false : settings.enableAgentMachineAccess,
                 };
             }
             const effective = resolveProjectSettings(settings, thread.projectId).settings;
             return {
               browser: effective.enableAgentBrowserAccess,
               device: effective.enableAgentDeviceAccess,
+              machines: effective.enableAgentMachineAccess,
             };
           }).pipe(
             Effect.catch((cause) =>
               Effect.logWarning(
-                "Could not resolve agent access; withholding browser and device tools.",
+                "Could not resolve agent access; withholding browser, device, and machine tools.",
                 { threadId, cause },
-              ).pipe(Effect.as({ browser: false, device: false })),
+              ).pipe(Effect.as({ browser: false, device: false, machines: false })),
             ),
           );
         },
@@ -450,13 +456,17 @@ export const layerWithOptions = (
               threadId,
               Effect.gen(function* () {
                 // Live providers build MCP clients once; reuse credentials across workspace handoffs.
-                const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
-                  yield* agentAccessSettings(threadId);
+                const {
+                  browser: browserToolsAvailable,
+                  device: deviceToolsAvailable,
+                  machines: machineToolsAvailable,
+                } = yield* agentAccessSettings(threadId);
                 const capabilities = new Set<
                   import("../mcp/McpInvocationContext.ts").McpCapability
                 >(["orchestration", "worktree", "pull-requests"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
+                if (machineToolsAvailable) capabilities.add("machines");
                 const subagent = yield* projectionStore.getThread(threadId).pipe(
                   Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
                   Effect.orElseSucceed(() => false),
@@ -482,6 +492,7 @@ export const layerWithOptions = (
                     resolved.thread.providerInstanceId === providerInstanceId &&
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
+                    resolved.capabilities.has("machines") === machineToolsAvailable &&
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {

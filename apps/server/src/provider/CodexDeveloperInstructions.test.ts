@@ -1,6 +1,9 @@
 import * as NodeAssert from "node:assert/strict";
 
-import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
+  T3_CODE_MACHINE_TOOL_INSTRUCTIONS,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import { describe, it } from "vite-plus/test";
 
 import {
@@ -12,7 +15,7 @@ describe("buildCodexAdditionalContext", () => {
   describe.each([
     { model: "custom-model", modelName: "Custom 🦊 Model", reasoningEffort: "xhigh" },
   ])("with runtime $model", (runtime) => {
-    it.each([undefined, { browser: true, device: true }])(
+    it.each([undefined, { browser: true, device: true, machines: true }])(
       "keeps every entry within Codex's per-entry cap with tools %j",
       (availability) => {
         const context = buildCodexAdditionalContext(runtime, availability);
@@ -77,15 +80,17 @@ describe("Codex orchestration context", () => {
   });
 });
 
-describe("Codex device context", () => {
-  it("adds the shared device block only when the session holds device access", () => {
-    const tools = (device: boolean) =>
-      buildCodexAdditionalContext({ model: "gpt-6.1-sol" }, { browser: true, device }).t3_code_tools
-        ?.value ?? "";
+describe("Codex device and machine context", () => {
+  it("adds each shared block only when the session holds its access", () => {
+    const tools = (device: boolean, machines: boolean) =>
+      buildCodexAdditionalContext({ model: "gpt-6.1-sol" }, { browser: true, device, machines })
+        .t3_code_tools?.value ?? "";
 
-    NodeAssert.ok(tools(true).includes(T3_CODE_DEVICE_TOOL_INSTRUCTIONS));
-    NodeAssert.ok(!tools(true).includes("ToolSearch"));
-    NodeAssert.ok(!tools(false).includes("## T3 Code devices"));
+    NodeAssert.ok(tools(true, false).includes(T3_CODE_DEVICE_TOOL_INSTRUCTIONS));
+    NodeAssert.ok(!tools(true, false).includes("ToolSearch"));
+    NodeAssert.ok(!tools(false, false).includes("## T3 Code devices"));
+    NodeAssert.ok(tools(false, true).includes(T3_CODE_MACHINE_TOOL_INSTRUCTIONS));
+    NodeAssert.ok(!tools(true, false).includes("## T3 Code machines"));
   });
 });
 

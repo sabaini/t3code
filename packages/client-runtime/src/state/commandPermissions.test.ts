@@ -122,6 +122,38 @@ describe("command permissions", () => {
     ),
   );
 
+  it.effect("lets operators release machines but keeps LXD servers behind the settings grant", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const release = createCommandPermissions(runtime, WS_METHODS.machinesRelease);
+        const serverCommands = [
+          WS_METHODS.machinesConnectHost,
+          WS_METHODS.machinesDisconnectHost,
+          WS_METHODS.machinesDeleteUntracked,
+        ].map((method) => createCommandPermissions(runtime, method));
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(release.permissionAtom(env))).toBe(true);
+        for (const command of serverCommands) {
+          expect(registry.get(command.permissionAtom(env))).toBe(false);
+        }
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthSettingsWriteScope],
+            permissions: [AuthSettingsWriteScope],
+          }),
+        );
+        expect(registry.get(release.permissionAtom(env))).toBe(false);
+        for (const command of serverCommands) {
+          expect(registry.get(command.permissionAtom(env))).toBe(true);
+          yield* command.authorize(registry, env);
+        }
+      }),
+    ),
+  );
+
   it.effect("requires the destination settings grant to check OTLP endpoints", () =>
     Effect.scoped(
       Effect.gen(function* () {

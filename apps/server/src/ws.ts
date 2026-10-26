@@ -24,6 +24,7 @@ import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
 import {
   AcpRegistryOperationError,
   CommandId,
+  MachineRpcError,
   authScopeResponse,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
@@ -192,6 +193,8 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { terminalOutputStream, withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+import * as MachineHosts from "./machines/MachineHosts.ts";
+import * as MachineService from "./machines/MachineService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -1319,6 +1322,10 @@ export const layerWsRpc = (
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
+      const machineService = yield* MachineService.MachineService;
+      const machineHosts = yield* MachineHosts.MachineHosts;
+      const machineRpcError = (error: { readonly message: string }) =>
+        new MachineRpcError({ message: error.message });
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
       const orchestrationEngine = yield* Orchestrator.OrchestratorV2;
@@ -3117,6 +3124,29 @@ export const layerWsRpc = (
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
         [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
         [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
+        [WS_METHODS.machinesSubscribeThread]: (input) =>
+          machineService.subscribeThread(input.threadId).pipe(
+            Stream.map((machines) => ({ machines })),
+            Stream.mapError(machineRpcError),
+          ),
+        [WS_METHODS.machinesRelease]: (input) =>
+          machineService.release(input).pipe(Effect.mapError(machineRpcError)),
+        [WS_METHODS.machinesInspectHosts]: (_input) =>
+          machineService.inspectHosts.pipe(Effect.mapError(machineRpcError)),
+        [WS_METHODS.machinesConnectHost]: (input) =>
+          machineHosts.connect(input).pipe(
+            Effect.map((host) => ({ hostId: host.id, label: host.label })),
+            Effect.mapError(machineRpcError),
+          ),
+        [WS_METHODS.machinesDisconnectHost]: (input) =>
+          machineHosts.disconnect(input.hostId).pipe(
+            Effect.map(({ manualCommand }) =>
+              manualCommand === undefined ? {} : { manualCommand },
+            ),
+            Effect.mapError(machineRpcError),
+          ),
+        [WS_METHODS.machinesDeleteUntracked]: (input) =>
+          machineService.deleteUntracked(input).pipe(Effect.mapError(machineRpcError)),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>
             Effect.gen(function* () {

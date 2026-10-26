@@ -67,6 +67,7 @@ export type T3McpToolSummaryAction =
   | "read-pr-guide"
   | "browser"
   | "device"
+  | "machine"
   | "html-preview"
   | "html-render";
 
@@ -286,6 +287,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "device",
   ),
   device_close: tool(["Close", "Closing", "Closed", "a device"], "device", "device"),
+  machine_list: tool(["List", "Listing", "Listed", "test machines"], "machine"),
+  machine_acquire: tool(["Create", "Creating", "Created", "a test machine"], "machine"),
+  machine_wait: tool(["Wait for", "Waiting for", "Waited for", "a test machine"], "machine"),
+  machine_release: tool(["Release", "Releasing", "Released", "a test machine"], "machine"),
   run_scheduled_task_now: tool(
     ["Run", "Running", "Requested a run of", "a scheduled task"],
     "schedule-run",

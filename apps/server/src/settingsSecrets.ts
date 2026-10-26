@@ -3,6 +3,7 @@ import {
   ClaudeSettings,
   CodexSettings,
   EasDeviceHostConfig,
+  MachineHostConfig,
   type ServerSettings,
   SimlockDeviceHostConfig,
   UsageLimitSourceConfig,
@@ -36,6 +37,7 @@ const providerSecretFields = new Map([
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
+const machineHostSecretFields = secretSettingsFields(MachineHostConfig);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
 
 export interface SettingsSecret {
@@ -173,6 +175,17 @@ export function mapSettingsSecrets(
       ) as SimlockDeviceHostConfig,
   );
 
+  const machineHosts = settings.machineHosts.map(
+    (host) =>
+      mapFields(
+        host,
+        machineHostSecretFields,
+        (field, serverHost) =>
+          `machine-host-${encode(host.id)}-${encode(field)}` +
+          (serverHost === null ? "" : `-${encode(serverHost)}`),
+      ) as MachineHostConfig,
+  );
+
   return {
     ...settings,
     providerInstances,
@@ -180,5 +193,6 @@ export function mapSettingsSecrets(
     usageLimitSources,
     easDeviceHosts,
     simlockDeviceHosts,
+    machineHosts,
   };
 }

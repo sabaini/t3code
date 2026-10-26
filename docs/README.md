@@ -16,6 +16,7 @@
 - [Import browser sessions](./user/browser-import.md)
 - [Use T3 Code as your default browser](./user/default-browser.md)
 - [Devices](./user/devices.md)
+- [Test machines](./user/machines.md)
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
@@ -56,6 +57,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Mobile development lifecycle](./internals/mobile-development.md)
 - [Terminal runtime](./internals/terminal-runtime.md)
 - [Devices](./internals/devices.md)
+- [Machines](./internals/machines.md)
 - [Voice input](./internals/voice-input.md)
 
 ### Runbooks

@@ -49,6 +49,8 @@
         "src/claude-history-worker.ts!",
         "scripts/cli.ts",
         "scripts/fetch-expo-schema.ts",
+        "scripts/machines-e2e-live.ts",
+        "scripts/machines-lxd-smoke.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/update-test-shard-weights.ts",
         "scripts/verify-background-live.ts",

@@ -108,6 +108,10 @@ Commands built at run time, external script files and full shell/interpreter sem
 
 This API replay measures routing and recovery decisions. Screenshots return product text and metadata without rendered image blocks, and Codex code cells have no `image` helper, so a cell that calls it fails with `image is not defined`. The shell remains simulated, children are not executed, and `priorTurns` is synthetic context rather than native resume or compaction. It does not test launcher execution, binding, pruning, actual device state, transport failures or resource cleanup, and it models agent-device's session check rather than running it. DEL-02 checks managed recording start/stop and the final filename; it does not inspect video bytes, required flow, transforms, codec or size. Screenshots and final text do not establish delivered artifacts or honesty. Keep local real-harness results separate; their scores and costs are not API-replay results. Offline validation costs $0. Record fresh per-model baseline and candidate costs before using device-case scores as release evidence.
 
+## Machine cases
+
+`cases/machines.ndjson` checks that agents with machine access route system work to LXD machines: `MACH-01` verifies an install script on a machine instead of the workstation, `MACH-02` creates two machines for a cluster and releases both, and `MACH-03` is a control where a plain test run stays local. `world.machineAgentAccess` gives the session the `machines` capability and T3's machine text; `world.machineProfiles` replaces the default `vm` and `container` profiles. Machine results come from T3's real machine handlers over an in-memory MachineService, and the shell simulator plays the machines.
+
 ## Where T3's text lives
 
 - `packages/provider-core/src/server/runtimeInstructions.ts`
