@@ -55,6 +55,37 @@ export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = deviceToolInstr
   ` Load them with ToolSearch \`select:${T3_CODE_DEVICE_TOOLS.map((tool) => `mcp__t3-code__${tool}`).join(",")}\`.`,
 );
 
+/** Machine guidance for sessions holding the `machines` capability. */
+export const T3_CODE_MACHINE_TOOL_INSTRUCTIONS = `## T3 Code machines
+
+This project lets you create disposable LXD virtual machines and containers with root access, for work that shouldn't run on the user's machine: system packages, services, OS-level tests, clean-system repros, several hosts. Call \`machine_list\` for profiles, then \`machine_acquire\`, and run commands with the exact ssh command it returns. Release each machine with \`machine_release\` when done.`;
+
+/** MCP capabilities whose guidance only sessions holding them get. */
+export interface T3GatedTools {
+  readonly device: boolean;
+  readonly machines: boolean;
+}
+
+export const T3_NO_GATED_TOOLS: T3GatedTools = { device: false, machines: false };
+
+export const t3GatedToolsOf = (capabilities: ReadonlySet<string> | undefined): T3GatedTools => ({
+  device: capabilities?.has("device") === true,
+  machines: capabilities?.has("machines") === true,
+});
+
+/** The gated guidance for `tools`, leaving out what `delivered` already got. */
+export const t3GatedToolInstructions = (
+  tools: T3GatedTools,
+  delivered: T3GatedTools = T3_NO_GATED_TOOLS,
+  device = T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
+): string =>
+  [
+    tools.device && !delivered.device ? device : "",
+    tools.machines && !delivered.machines ? T3_CODE_MACHINE_TOOL_INSTRUCTIONS : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
 // ACP only: some ACP agents accept the injected MCP server but never expose
 // its tools, so they need the terminal transport other harnesses never use.
 const T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS = `ACP fallback: if the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset for a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`.`;
@@ -70,7 +101,7 @@ Investigate with read-only actions and do not edit files or otherwise execute th
 export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
-  readonly hasDeviceTools: boolean;
+  readonly tools: T3GatedTools;
 }
 
 /** ACP lacks system/developer fields; inject context on first prompt and tool/mode changes. */
@@ -84,7 +115,8 @@ export function t3AcpPromptWithInstructions(input: {
   if (
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
-    input.previousState.hasDeviceTools === input.state.hasDeviceTools
+    input.previousState.tools.device === input.state.tools.device &&
+    input.previousState.tools.machines === input.state.tools.machines
   ) {
     return input.prompt;
   }
@@ -95,7 +127,9 @@ export function t3AcpPromptWithInstructions(input: {
     ...(input.state.hasT3Mcp
       ? [
           T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
-          ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
+          ...(input.state.tools.device || input.state.tools.machines
+            ? [t3GatedToolInstructions(input.state.tools)]
+            : []),
           T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
           T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
         ]
@@ -104,10 +138,12 @@ export function t3AcpPromptWithInstructions(input: {
   return `<t3_code_instructions>\n${instructions.join("\n\n")}\n</t3_code_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
 }
 
-const orchestrationInstructions = (hasDeviceTools: boolean) =>
-  hasDeviceTools
-    ? `${T3_CODE_ORCHESTRATION_INSTRUCTIONS}\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS}\n`
+const orchestrationInstructions = (tools: T3GatedTools) => {
+  const gated = t3GatedToolInstructions(tools);
+  return gated
+    ? `${T3_CODE_ORCHESTRATION_INSTRUCTIONS}\n${gated}\n`
     : T3_CODE_ORCHESTRATION_INSTRUCTIONS;
+};
 
 function prependT3OrchestrationInstructions(prompt: string, instructions: string): string {
   return `<t3_code_orchestration_instructions>${instructions.trim()}</t3_code_orchestration_instructions>\n\n<user_request>\n${prompt}\n</user_request>`;
@@ -117,25 +153,21 @@ function prependT3OrchestrationInstructions(prompt: string, instructions: string
 export function t3OrchestrationPrompt(input: {
   readonly prompt: string;
   readonly hasT3Mcp: boolean;
-  readonly hasDeviceTools: boolean;
+  readonly tools: T3GatedTools;
   readonly orchestrationDelivered: boolean;
-  readonly deviceInstructionsDelivered: boolean;
+  readonly toolsDelivered: T3GatedTools;
 }): string {
   if (!input.hasT3Mcp) return input.prompt;
   if (!input.orchestrationDelivered) {
-    return prependT3OrchestrationInstructions(
-      input.prompt,
-      orchestrationInstructions(input.hasDeviceTools),
-    );
+    return prependT3OrchestrationInstructions(input.prompt, orchestrationInstructions(input.tools));
   }
-  return input.hasDeviceTools && !input.deviceInstructionsDelivered
-    ? prependT3OrchestrationInstructions(input.prompt, T3_CODE_DEVICE_TOOL_INSTRUCTIONS)
-    : input.prompt;
+  const gated = t3GatedToolInstructions(input.tools, input.toolsDelivered);
+  return gated ? prependT3OrchestrationInstructions(input.prompt, gated) : input.prompt;
 }
 
 export function t3OrchestrationSystemPrompt(
   hasT3Mcp: boolean,
-  hasDeviceTools: boolean,
+  tools: T3GatedTools,
 ): string | undefined {
-  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools) : undefined;
+  return hasT3Mcp ? orchestrationInstructions(tools) : undefined;
 }

@@ -813,6 +813,7 @@ function runBrowserAccessScenario(input: {
   readonly enableAgentBrowserAccess: boolean;
   readonly projectOverride: boolean;
   readonly deviceOverride?: boolean;
+  readonly machineOverride?: boolean;
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
   readonly delegatedBy?: ThreadId;
@@ -873,6 +874,9 @@ function runBrowserAccessScenario(input: {
                 ...(input.deviceOverride === undefined
                   ? {}
                   : { enableAgentDeviceAccess: input.deviceOverride }),
+                ...(input.machineOverride === undefined
+                  ? {}
+                  : { enableAgentMachineAccess: input.machineOverride }),
               },
             },
           }),
@@ -5592,5 +5596,29 @@ it.effect("ProviderSessionManagerV2 gives a delegated child its project's device
       delegatedBy: ThreadId.make("thread-provider-session-manager-parent"),
     });
     assert.isTrue(child?.capabilities?.has("device"));
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 grants machine tools only to projects that turn them on", () =>
+  Effect.gen(function* () {
+    const enabled = yield* runBrowserAccessScenario({
+      enableAgentBrowserAccess: true,
+      projectOverride: true,
+      machineOverride: true,
+    });
+    assert.isTrue(enabled?.capabilities?.has("machines"));
+    assert.isFalse(enabled?.capabilities?.has("device"));
+    const unset = yield* runBrowserAccessScenario({
+      enableAgentBrowserAccess: true,
+      projectOverride: true,
+    });
+    assert.isFalse(unset?.capabilities?.has("machines"));
+    const deleted = yield* runBrowserAccessScenario({
+      enableAgentBrowserAccess: true,
+      projectOverride: true,
+      machineOverride: true,
+      projectExists: false,
+    });
+    assert.isFalse(deleted?.capabilities?.has("machines"));
   }),
 );

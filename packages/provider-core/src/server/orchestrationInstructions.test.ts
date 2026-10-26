@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
+  T3_CODE_MACHINE_TOOL_INSTRUCTIONS,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
   t3AcpPromptWithInstructions,
   t3OrchestrationPrompt,
@@ -39,43 +40,61 @@ describe("T3 device instructions", () => {
     );
   });
 
-  it("reach OpenCode and Cursor only when the session holds device access", () => {
-    assert.include(t3OrchestrationSystemPrompt(true, true), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
-    assert.notInclude(t3OrchestrationSystemPrompt(true, false), "## T3 Code devices");
-    assert.isUndefined(t3OrchestrationSystemPrompt(false, true));
+  it("reach OpenCode and Cursor only when the session holds device or machine access", () => {
+    const none = { device: false, machines: false };
+    const device = { device: true, machines: false };
+    const machines = { device: false, machines: true };
+    assert.include(t3OrchestrationSystemPrompt(true, device), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
+    assert.include(t3OrchestrationSystemPrompt(true, machines), T3_CODE_MACHINE_TOOL_INSTRUCTIONS);
+    assert.notInclude(t3OrchestrationSystemPrompt(true, none), "## T3 Code devices");
+    assert.notInclude(t3OrchestrationSystemPrompt(true, none), "## T3 Code machines");
+    assert.notInclude(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "machine_");
+    assert.isUndefined(t3OrchestrationSystemPrompt(false, device));
 
-    const firstRun = (hasDeviceTools: boolean) =>
+    const firstRun = (tools: typeof none) =>
       t3OrchestrationPrompt({
         prompt: "Check the login screen.",
         hasT3Mcp: true,
-        hasDeviceTools,
+        tools,
         orchestrationDelivered: false,
-        deviceInstructionsDelivered: false,
+        toolsDelivered: none,
       });
-    assert.include(firstRun(true), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
-    assert.notInclude(firstRun(false), "## T3 Code devices");
+    assert.include(firstRun(device), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
+    assert.notInclude(firstRun(none), "## T3 Code devices");
 
-    const laterRun = (deviceInstructionsDelivered: boolean) =>
+    const laterRun = (toolsDelivered: typeof none) =>
       t3OrchestrationPrompt({
         prompt: "Check the login screen.",
         hasT3Mcp: true,
-        hasDeviceTools: true,
+        tools: { device: true, machines: true },
         orchestrationDelivered: true,
-        deviceInstructionsDelivered,
+        toolsDelivered,
       });
-    assert.include(laterRun(false), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
-    assert.notInclude(laterRun(false), T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim());
-    assert.equal(laterRun(true), "Check the login screen.");
+    assert.include(laterRun(none), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
+    assert.include(laterRun(device), T3_CODE_MACHINE_TOOL_INSTRUCTIONS);
+    assert.notInclude(laterRun(device), "## T3 Code devices");
+    assert.notInclude(laterRun(none), T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim());
+    assert.equal(laterRun({ device: true, machines: true }), "Check the login screen.");
   });
 
-  it("reach ACP agents again when device access changes mid-thread", () => {
-    const state = { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: false } as const;
+  it("reach ACP agents again when device or machine access changes mid-thread", () => {
+    const state = {
+      interactionMode: "default",
+      hasT3Mcp: true,
+      tools: { device: false, machines: false },
+    } as const;
     const withDevices = t3AcpPromptWithInstructions({
       prompt: "Check the login screen.",
-      state: { ...state, hasDeviceTools: true },
+      state: { ...state, tools: { device: true, machines: false } },
       previousState: state,
     });
     assert.include(withDevices, T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
+    const withMachines = t3AcpPromptWithInstructions({
+      prompt: "Test the install.",
+      state: { ...state, tools: { device: false, machines: true } },
+      previousState: state,
+    });
+    assert.include(withMachines, T3_CODE_MACHINE_TOOL_INSTRUCTIONS);
     assert.equal(
       t3AcpPromptWithInstructions({ prompt: "Again.", state, previousState: state }),
       "Again.",

@@ -24,6 +24,7 @@ import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
+import { ThreadMachinesPanel } from "./ThreadMachinesPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadServersPanel } from "./ThreadServersPanel";
 import {
@@ -84,6 +85,7 @@ interface ThreadDetailsPanelProps extends Pick<
   onComposerFocusRequest: () => void;
   onOpenChanges?: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
+  onRunShellCommand?: ((command: string) => void) | undefined;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
     scriptId: string,
@@ -272,6 +274,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 <ThreadAutomationsPanel
                   environmentId={props.environmentId}
                   threadId={props.threadId}
+                />
+              ) : null}
+
+              {density === "full" && !props.draftId ? (
+                <ThreadMachinesPanel
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                  onRunShellCommand={props.onRunShellCommand}
                 />
               ) : null}
 

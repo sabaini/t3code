@@ -144,6 +144,7 @@ import {
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { environmentCatalog } from "../../connection/catalog";
 import { deviceEnvironment } from "../../state/device";
+import { useThreadMachines } from "../../state/machines";
 import { useEnvironmentQuery } from "../../state/query";
 import { threadDevicePreviews } from "../devices/threadDevicePreviews";
 import { ThreadBrowserFloat } from "../browser/ThreadBrowserFloat";
@@ -434,6 +435,7 @@ function ThreadDetailBody(
     deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
   );
   const devicePreviews = threadDevicePreviews(deviceState.data, props.selectedThread.id);
+  const machines = useThreadMachines(props.environmentId, props.selectedThread.id);
   const openDevicePreview = () => {
     Keyboard.dismiss();
     if (
@@ -913,6 +915,7 @@ function ThreadDetailBody(
     queuedCount > 0 ||
     agentsSegment !== null ||
     devicePreviews.length > 0 ||
+    machines.length > 0 ||
     browserTabs.tabs.length > 0 ||
     props.connectionStateLabel !== "connected" ||
     props.queuedMessages.length > 0 ||
@@ -1635,6 +1638,20 @@ function ThreadDetailBody(
                     browserPreview={
                       browserTabs.tabs.length > 0
                         ? { count: browserTabs.tabs.length, onPress: () => openBrowserPreview() }
+                        : null
+                    }
+                    machines={
+                      machines.length > 0
+                        ? {
+                            count: machines.length,
+                            onPress: () => {
+                              Keyboard.dismiss();
+                              navigation.navigate("ThreadMachines", {
+                                environmentId: props.environmentId,
+                                threadId: props.selectedThread.id,
+                              });
+                            },
+                          }
                         : null
                     }
                     showScrollToEnd={showScrollToEndButton}

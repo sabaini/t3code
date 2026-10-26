@@ -17,6 +17,7 @@ import {
   ComposerContextRecord,
   DeviceOperationError,
   DeviceSummary,
+  MachineProfile,
   OrchestratorMcpTaskRole,
   PreviewAutomationError,
   PreviewAutomationUnavailableError,
@@ -56,6 +57,7 @@ import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
+import { MachineToolkit } from "../../apps/server/src/mcp/toolkits/machines/tools.ts";
 import { MessageToolkit } from "../../apps/server/src/mcp/toolkits/message/tools.ts";
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
@@ -94,6 +96,7 @@ import {
   SecretExpect,
   secretDiagnostics,
 } from "./secret-grading.ts";
+import { isMachineTool, type MachineTools, makeMachineTools } from "./machines.ts";
 /** Agent models by id, with the display name a harness gives them. */
 const MODELS = {
   "claude-sonnet-5-5": "Sonnet 5.5",
@@ -275,6 +278,10 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceAgentAccess: Schema.optional(Schema.Boolean),
     /** false: agent browser access is off. T3 denies every preview call and drops its browser text. */
     browserAgentAccess: Schema.optional(Schema.Boolean),
+    /** true: agent machine access is on. T3 adds its machine text and answers machine calls. */
+    machineAgentAccess: Schema.optional(Schema.Boolean),
+    /** The project's machine profiles. Defaults to a `vm` and a `container`. */
+    machineProfiles: Schema.optional(Schema.Array(MachineProfile)),
     /** Every capture reaches T3 with adb screencap's warning ahead of the PNG: T3 reports 0×0. */
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
@@ -458,6 +465,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PullRequestsToolkit,
   PreviewToolkit,
   DeviceToolkit,
+  MachineToolkit,
   HtmlToolkit,
   MessageToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
@@ -527,11 +535,12 @@ const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?:
  * `browser` say whether the thread holds the `device` and `preview` capabilities, as agent device
  * and browser access decide.
  */
-const claudeQueryOptions = (model: Model, device = true, browser = true) => {
+const claudeQueryOptions = (model: Model, device = true, browser = true, machines = false) => {
   // Refs whose text follows a capability read its flag; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
     readonly deviceToolsAvailable?: boolean;
     readonly browserToolsAvailable?: boolean;
+    readonly machineToolsAvailable?: boolean;
   } = {
     modelSelection: { instanceId: ProviderInstanceId.make(CLAUDE_PROVIDER), model },
     nativeThreadId: "mcp-tool-use-eval",
@@ -540,13 +549,14 @@ const claudeQueryOptions = (model: Model, device = true, browser = true) => {
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
     deviceToolsAvailable: device,
     browserToolsAvailable: browser,
+    machineToolsAvailable: machines,
   };
   return makeClaudeQueryOptions(input);
 };
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
-export const t3SystemAppend = (model: Model, device = true, browser = true) => {
-  const { systemPrompt } = claudeQueryOptions(model, device, browser);
+export const t3SystemAppend = (model: Model, device = true, browser = true, machines = false) => {
+  const { systemPrompt } = claudeQueryOptions(model, device, browser, machines);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -557,10 +567,15 @@ export const t3SystemAppend = (model: Model, device = true, browser = true) => {
  * The context T3's SubagentStart hooks give a native subagent, which gets none of the append.
  * Empty when T3 registers no such hook.
  */
-export const t3SubagentContext = async (model: Model, device = true, browser = true) => {
-  const hooks = (claudeQueryOptions(model, device, browser).hooks?.SubagentStart ?? []).flatMap(
-    (m) => m.hooks,
-  );
+export const t3SubagentContext = async (
+  model: Model,
+  device = true,
+  browser = true,
+  machines = false,
+) => {
+  const hooks = (
+    claudeQueryOptions(model, device, browser, machines).hooks?.SubagentStart ?? []
+  ).flatMap((m) => m.hooks);
   const input = {
     hook_event_name: "SubagentStart" as const,
     session_id: "mcp-tool-use-eval",
@@ -592,7 +607,7 @@ const t3ContextReport = (model: Model) => {
   const descriptions = t3Tools.reduce((sum, tool) => sum + valueText(tool.description).length, 0);
   const schemas = JSON.stringify(t3Tools).length;
   return [
-    `- T3 context: system text ${size((isCodex(model) ? JSON.stringify(buildCodexAdditionalContext({ model }, { browser: true, device: true })) : t3SystemAppend(model)).length)}`,
+    `- T3 context: system text ${size((isCodex(model) ? JSON.stringify(buildCodexAdditionalContext({ model }, { browser: true, device: true, machines: false })) : t3SystemAppend(model)).length)}`,
     `tool descriptions ${size(descriptions)}`,
     `full tool schemas ${size(schemas)} across ${t3Tools.length} tools.`,
   ].join(", ");
@@ -635,6 +650,8 @@ export const buildBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
+    /** true: the thread has agent machine access, so T3's text covers machines. */
+    readonly machineAccess?: boolean;
   },
 ) => {
   const t3 = visibleT3Tools(options);
@@ -660,7 +677,7 @@ export const buildBase = (
   const { model } = options;
   const append = options.nativeSubagent
     ? ""
-    : t3SystemAppend(model, options.deviceAccess, options.browserAccess);
+    : t3SystemAppend(model, options.deviceAccess, options.browserAccess, options.machineAccess);
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -729,6 +746,8 @@ const buildCodexBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
+    /** true: the thread has agent machine access, so T3's text covers machines. */
+    readonly machineAccess?: boolean;
   },
 ): Base => {
   const t3 = visibleT3Tools(options);
@@ -764,7 +783,11 @@ const buildCodexBase = (
   });
   const context = buildCodexAdditionalContext(
     { model: options.model, reasoningEffort: effort },
-    { browser: options.browserAccess ?? true, device: options.deviceAccess ?? true },
+    {
+      browser: options.browserAccess ?? true,
+      device: options.deviceAccess ?? true,
+      machines: options.machineAccess ?? false,
+    },
   );
   input.push(
     ...Object.entries(context).map(([key, entry]) => message(`<${key}>${entry.value}</${key}>`)),
@@ -871,6 +894,8 @@ type Sample = {
   secretRequests: number;
   /** T3's device tools, once `withDevices` builds them for a world with devices. */
   devices?: DeviceTools;
+  /** T3's machine tools over the world's machines, once `withDevices` builds them. */
+  machines?: MachineTools;
   /** T3's results for prior device calls whose case result is "default". */
   readonly priorResults: Map<unknown, string>;
   /** Prior calls whose T3 result is an error, so the agent sees it as one. */
@@ -944,6 +969,7 @@ const nextMock = (sample: Sample, name: string, mock: unknown) => {
  */
 export const withDevices = Effect.fn("evaluateMcpToolUse.withDevices")(function* (sample: Sample) {
   const world = sample.testCase.setup.world;
+  sample.machines = yield* makeMachineTools(world ?? {});
   if (world?.devices === undefined) return;
   sample.devices = yield* makeDeviceTools(
     { ...world, devices: world.devices },
@@ -1517,6 +1543,7 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
       : []),
     // Which device each launcher and session drives, and which of this call's opens are refused.
     ...(devices?.describe(shell, typeof command === "string" ? command : undefined) ?? []),
+    ...(sample.machines?.describe() ?? []),
     ...(world?.deviceInvalidCapture
       ? [
           "T3's device_screenshot gets each capture as a PNG whose header says 0×0, so it reports 0×0. agent-device's own screenshot is unaffected.",
@@ -1689,6 +1716,10 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   }
   if (sample.backgroundWait && isT3Name(call.name) && name === "t3_background_wait" && fromWorld) {
     const result = yield* sample.backgroundWait(input);
+    return result.isError ? failed(result.text) : toolResult(call.id, result.text);
+  }
+  if (sample.machines && isT3Name(call.name) && isMachineTool(name) && mock === undefined) {
+    const result = yield* sample.machines.call(name, input);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
   }
   // A pasted secret is saved without a card, so a mocked card outcome does not apply.
@@ -2558,6 +2589,7 @@ const main = Effect.gen(function* () {
     role: McpToolUseCase["setup"]["role"],
     deviceAccess: boolean,
     browserAccess: boolean,
+    machineAccess: boolean,
     links: boolean,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
@@ -2571,6 +2603,7 @@ const main = Effect.gen(function* () {
               links,
               deviceAccess,
               browserAccess,
+              machineAccess,
             }),
           ),
         )
@@ -2584,29 +2617,40 @@ const main = Effect.gen(function* () {
               links,
               deviceAccess,
               browserAccess,
+              machineAccess,
             });
             return role === "native-subagent"
               ? Effect.promise(() =>
-                  t3SubagentContext(flags.model, deviceAccess, browserAccess),
+                  t3SubagentContext(flags.model, deviceAccess, browserAccess, machineAccess),
                 ).pipe(Effect.map((subagentContext): Base => ({ ...built, subagentContext })))
               : Effect.succeed(built);
           }),
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}`;
-  const base = yield* buildFor("top", true, true, false);
-  const bases = new Map<string, Base>([["top:true:true:false", base]]);
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.world?.machineAgentAccess === true}:${setup.linkedEnvironments === true}`;
+  const base = yield* buildFor("top", true, true, false, false);
+  const bases = new Map<string, Base>([["top:true:true:false:false", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", device, browser, links] = key.split(":") as [
+    const [role = "top", device, browser, machines, links] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
       string,
       string,
       string,
+      string,
     ];
-    bases.set(key, yield* buildFor(role, device === "true", browser === "true", links === "true"));
+    bases.set(
+      key,
+      yield* buildFor(
+        role,
+        device === "true",
+        browser === "true",
+        machines === "true",
+        links === "true",
+      ),
+    );
   }
   const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";

@@ -289,6 +289,10 @@ Passes per case, main's runtime text (3 samples) → this branch's "Link every o
 
 After the change, the first reference to a file is an absolute link. The remaining failures come from two other kinds of span. Some repeat the file later as relative inline code (Sonnet's other-checkout failures). Others quote values rather than cite files, such as `main` set to `src/index.ts` or the import `./ws`. Chat still turns those spans into pills.
 
+## Machine cases
+
+`cases/machines.ndjson` checks that agents with machine access route system work to LXD machines: `MACH-01` verifies an install script on a machine instead of the workstation, `MACH-02` creates two machines for a cluster and releases both, and `MACH-03` is a control where a plain test run stays local. `world.machineAgentAccess` gives the session the `machines` capability and T3's machine text; `world.machineProfiles` replaces the default `vm` and `container` profiles. Machine results come from T3's real machine handlers over an in-memory MachineService, and the shell simulator plays the machines.
+
 ## Where T3's text lives
 
 - `packages/provider-core/src/server/runtimeInstructions.ts`

@@ -3947,6 +3947,7 @@ export default function ChatView(props: ChatViewProps) {
                     ? { onOpenChanges: openChangesFromThreadPanelStable }
                     : {})}
                   onRunProjectScript={runProjectScriptStable}
+                  onRunShellCommand={activeProject ? runShellCommandStable : undefined}
                   onAddProjectScript={saveProjectScriptStable}
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
