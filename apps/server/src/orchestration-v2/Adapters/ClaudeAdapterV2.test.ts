@@ -85,7 +85,10 @@ import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { WorkflowAgentTranscriptReadObserver } from "../workflowAgentTranscript.ts";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
-import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
+  T3_CODE_MACHINE_TOOL_INSTRUCTIONS,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
 import { HtmlToolkit } from "../../mcp/toolkits/html/tools.ts";
@@ -691,8 +694,13 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
   });
 });
 
-describe("ClaudeAdapterV2 device instructions", () => {
-  const options = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
+describe("ClaudeAdapterV2 device and machine instructions", () => {
+  interface Access {
+    readonly mcp: boolean;
+    readonly deviceToolsAvailable: boolean;
+    readonly machineToolsAvailable?: boolean;
+  }
+  const options = (input: Access) =>
     ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -705,9 +713,10 @@ describe("ClaudeAdapterV2 device instructions", () => {
         ? { mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } } }
         : {}),
       deviceToolsAvailable: input.deviceToolsAvailable,
+      machineToolsAvailable: input.machineToolsAvailable === true,
       environment: {},
     });
-  const append = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
+  const append = (input: Access) =>
     (options(input).systemPrompt as { readonly append?: string }).append ?? "";
 
   it("gives a session with device access the device block and the ToolSearch line to load it", () => {
@@ -721,12 +730,16 @@ describe("ClaudeAdapterV2 device instructions", () => {
     assert.notInclude(append({ mcp: false, deviceToolsAvailable: true }), "## T3 Code devices");
   });
 
+  it("gives only sessions with machine access the machine block", () => {
+    const machines = { mcp: true, deviceToolsAvailable: false, machineToolsAvailable: true };
+    assert.include(append(machines), T3_CODE_MACHINE_TOOL_INSTRUCTIONS);
+    assert.notInclude(append({ mcp: true, deviceToolsAvailable: true }), "## T3 Code machines");
+    assert.notInclude(append({ ...machines, mcp: false }), "## T3 Code machines");
+  });
+
   it("gives native subagents the device block only in a session with device access", async () => {
     // Subagents start from their task prompt, not the parent's system prompt.
-    const subagentContext = (input: {
-      readonly mcp: boolean;
-      readonly deviceToolsAvailable: boolean;
-    }) =>
+    const subagentContext = (input: Access) =>
       Promise.all(
         (options(input).hooks?.SubagentStart ?? []).flatMap((matcher) =>
           matcher.hooks.map((hook) =>
@@ -754,6 +767,21 @@ describe("ClaudeAdapterV2 device instructions", () => {
       },
     ]);
     assert.deepEqual(await subagentContext({ mcp: true, deviceToolsAvailable: false }), []);
+    assert.deepEqual(
+      await subagentContext({
+        mcp: true,
+        deviceToolsAvailable: false,
+        machineToolsAvailable: true,
+      }),
+      [
+        {
+          hookSpecificOutput: {
+            hookEventName: "SubagentStart",
+            additionalContext: T3_CODE_MACHINE_TOOL_INSTRUCTIONS,
+          },
+        },
+      ],
+    );
     assert.deepEqual(await subagentContext({ mcp: false, deviceToolsAvailable: true }), []);
   });
 });

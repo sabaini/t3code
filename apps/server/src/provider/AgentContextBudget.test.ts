@@ -12,6 +12,7 @@ import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
 import { DeviceService } from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
+import { MachineService } from "../machines/MachineService.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
@@ -53,6 +54,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(DocumentText)({}),
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),
+  Layer.mock(MachineService)({ sshConfigPath: () => "" }),
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
   Layer.mock(McpProviderSessions)({}),
   Layer.mock(OrchestratorV2)({}),
@@ -102,7 +104,7 @@ const codexAdditionalContext = () =>
   Object.values(
     buildCodexAdditionalContext(
       { model: "gpt-6.1-sol", modelName: "GPT-6.1 Sol", reasoningEffort: "high" },
-      { browser: true, device: true },
+      { browser: true, device: true, machines: false },
     ),
   )
     .map((entry) => entry.value)

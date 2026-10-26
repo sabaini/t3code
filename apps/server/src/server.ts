@@ -5,6 +5,10 @@ import * as EnvironmentKeys from "./cloud/environmentKeys.ts";
 import * as AssetSigner from "./assets/AssetSigner.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as MachineHosts from "./machines/MachineHosts.ts";
+import * as MachineLeaseStore from "./machines/MachineLeaseStore.ts";
+import * as MachineService from "./machines/MachineService.ts";
+import * as MachineThreads from "./machines/MachineThreads.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
@@ -641,12 +645,19 @@ const layerServerRestart = Layer.effect(
   }),
 );
 
+const layerMachines = MachineService.layer.pipe(
+  Layer.provideMerge(MachineHosts.layer),
+  Layer.provide(Layer.mergeAll(MachineLeaseStore.layer, MachineThreads.layer)),
+  Layer.provide(ProcessRunner.layer),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+  layerMachines,
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),
     Layer.provide(layerServerRestart),

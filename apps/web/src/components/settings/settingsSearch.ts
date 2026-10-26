@@ -1007,6 +1007,26 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["simulator support xcode android studio sdk avd runtime"],
   },
   {
+    id: "agent-machine-access",
+    title: "Agent machine access",
+    to: "/settings/devices",
+    scope: "project-defaults",
+    searchTerms: ["lxd test machines virtual machines vm containers ssh agents create sandbox"],
+  },
+  {
+    id: "machine-profiles",
+    title: "Machine profiles",
+    to: "/settings/devices",
+    scope: "project-defaults",
+    searchTerms: ["lxd test machines vm container image ubuntu cpus memory disks lifetime"],
+  },
+  {
+    id: "machine-hosts",
+    title: "LXD servers",
+    to: "/settings/devices",
+    searchTerms: ["test machines lxd ovn trust token connect disconnect untracked"],
+  },
+  {
     id: "browser-profiles",
     title: "Browser profiles",
     to: "/settings/browser",

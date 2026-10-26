@@ -52,7 +52,12 @@ import {
   hasCursorSkillMention,
   rewriteCursorSkillMentions,
 } from "./skills.ts";
-import { t3OrchestrationPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  T3_NO_GATED_TOOLS,
+  t3GatedToolsOf,
+  t3OrchestrationPrompt,
+  type T3GatedTools,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -1002,7 +1007,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         const told = yield* Ref.make<{
           readonly agent: string;
           readonly orchestration: boolean;
-          readonly device: boolean;
+          readonly tools: T3GatedTools;
         } | null>(null);
         const warnedUnsupportedSandbox = yield* Ref.make(false);
         const activeTurn = yield* Ref.make<ActiveCursorTurn | null>(null);
@@ -2282,8 +2287,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         const resolveUserMessage = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           mcpServers: Record<string, McpServerConfig> | undefined,
-          hasDeviceTools: boolean,
-          delivered: { readonly orchestration: boolean; readonly device: boolean },
+          tools: T3GatedTools,
+          delivered: { readonly orchestration: boolean; readonly tools: T3GatedTools },
         ) {
           const rawText = turnInput.message.text;
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
@@ -2314,9 +2319,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               resolveExtractedTextPath: host.resolveExtractedTextPath,
             }),
             hasT3Mcp: mcpServers !== undefined,
-            hasDeviceTools,
+            tools,
             orchestrationDelivered: delivered.orchestration,
-            deviceInstructionsDelivered: delivered.device,
+            toolsDelivered: delivered.tools,
           });
           const images = yield* Effect.forEach(
             turnInput.message.attachments.filter(isProviderNativeImageAttachment),
@@ -2382,20 +2387,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             });
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const mcpServers = cursorMcpServers(mcpSession);
-            const hasDeviceTools =
-              mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
+            const tools =
+              mcpServers === undefined
+                ? T3_NO_GATED_TOOLS
+                : t3GatedToolsOf(mcpSession?.capabilities);
             const known = yield* Ref.get(told);
             // A conversation this process has not sent to was told on its first run.
             const delivered =
               known?.agent === agent.nativeThreadId
                 ? known
-                : { orchestration: turnInput.runOrdinal > 1, device: false };
-            const message = yield* resolveUserMessage(
-              turnInput,
-              mcpServers,
-              hasDeviceTools,
-              delivered,
-            );
+                : { orchestration: turnInput.runOrdinal > 1, tools: T3_NO_GATED_TOOLS };
+            const message = yield* resolveUserMessage(turnInput, mcpServers, tools, delivered);
             const compacted = message === "/compress";
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
@@ -2422,7 +2424,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             yield* Ref.set(told, {
               agent: agent.nativeThreadId,
               orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
-              device: !compacted && hasDeviceTools,
+              tools: compacted ? T3_NO_GATED_TOOLS : tools,
             });
             const startedAt = yield* DateTime.now;
             const completed = yield* Deferred.make<void, never>();

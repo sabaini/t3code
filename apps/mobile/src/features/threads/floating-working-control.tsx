@@ -29,6 +29,7 @@ import { ControlPill } from "../../components/ui/ControlPill";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { BrowserPreviewButton } from "../browser/browser-preview-button";
 import { DevicePreviewButton } from "../devices/device-preview-button";
+import { MachinesButton } from "../machines/machines-button";
 import type { FloatingWorkingStatus } from "./floating-working-status";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
@@ -72,6 +73,7 @@ export function FloatingWorkingControl(props: {
   readonly extensionStatus?: { readonly label: string; readonly onPress: () => void } | null;
   readonly devicePreview: { readonly count: number; readonly onPress: () => void } | null;
   readonly browserPreview: { readonly count: number; readonly onPress: () => void } | null;
+  readonly machines: { readonly count: number; readonly onPress: () => void } | null;
   readonly showScrollToEnd: boolean;
   readonly onScrollToEnd: () => void;
   readonly agents: SubagentPillSegment | null;
@@ -97,7 +99,8 @@ export function FloatingWorkingControl(props: {
       : null;
   const [agentsWidth, setAgentsWidth] = useState(0);
   const hasQueue = props.queuedCount > 0;
-  const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
+  const hasPreview =
+    props.devicePreview !== null || props.browserPreview !== null || props.machines !== null;
   const [previewWidth, setPreviewWidth] = useState(0);
   const agents = props.agents;
   const hasAgents = agents !== null;
@@ -170,7 +173,9 @@ export function FloatingWorkingControl(props: {
     hasStatus ||
     hasAgents ||
     hasQueue ||
-    (props.devicePreview !== null && props.browserPreview !== null);
+    [props.devicePreview, props.browserPreview, props.machines].filter(
+      (preview) => preview !== null,
+    ).length > 1;
   const statusInteractive =
     props.status?.kind === "connection" ||
     props.status?.kind === "extension" ||
@@ -260,6 +265,9 @@ export function FloatingWorkingControl(props: {
           ) : null}
           {props.browserPreview !== null ? (
             <BrowserPreviewButton {...props.browserPreview} compact={previewCompact} />
+          ) : null}
+          {props.machines !== null ? (
+            <MachinesButton {...props.machines} compact={previewCompact} />
           ) : null}
         </View>
       ) : null}

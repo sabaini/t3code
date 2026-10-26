@@ -312,6 +312,18 @@ import {
   DeviceShutdownInput,
 } from "./device.ts";
 import {
+  MachineHostConnectInput,
+  MachineHostConnectResult,
+  MachineHostDisconnectResult,
+  MachineHostInput,
+  MachineHostsInspection,
+  MachineReleaseInput,
+  MachineRpcError,
+  MachineThreadInput,
+  MachineThreadState,
+  UntrackedMachineInput,
+} from "./machines.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
@@ -502,6 +514,13 @@ export const WS_METHODS = {
   deviceShutdown: "device.shutdown",
   deviceDetail: "device.detail",
   deviceAction: "device.action",
+
+  machinesSubscribeThread: "machines.subscribeThread",
+  machinesRelease: "machines.release",
+  machinesInspectHosts: "machines.inspectHosts",
+  machinesConnectHost: "machines.connectHost",
+  machinesDisconnectHost: "machines.disconnectHost",
+  machinesDeleteUntracked: "machines.deleteUntracked",
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -1769,6 +1788,43 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   stream: true,
 });
 
+const MachineFailure = Schema.Union([MachineRpcError, EnvironmentAuthorizationError]);
+
+const WsMachinesSubscribeThreadRpc = Rpc.make(WS_METHODS.machinesSubscribeThread, {
+  payload: MachineThreadInput,
+  success: MachineThreadState,
+  error: MachineFailure,
+  stream: true,
+});
+
+const WsMachinesReleaseRpc = Rpc.make(WS_METHODS.machinesRelease, {
+  payload: MachineReleaseInput,
+  error: MachineFailure,
+});
+
+const WsMachinesInspectHostsRpc = Rpc.make(WS_METHODS.machinesInspectHosts, {
+  payload: Schema.Struct({}),
+  success: MachineHostsInspection,
+  error: MachineFailure,
+});
+
+const WsMachinesConnectHostRpc = Rpc.make(WS_METHODS.machinesConnectHost, {
+  payload: MachineHostConnectInput,
+  success: MachineHostConnectResult,
+  error: MachineFailure,
+});
+
+const WsMachinesDisconnectHostRpc = Rpc.make(WS_METHODS.machinesDisconnectHost, {
+  payload: MachineHostInput,
+  success: MachineHostDisconnectResult,
+  error: MachineFailure,
+});
+
+const WsMachinesDeleteUntrackedRpc = Rpc.make(WS_METHODS.machinesDeleteUntracked, {
+  payload: UntrackedMachineInput,
+  error: MachineFailure,
+});
+
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
   payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
   success: OrchestrationV2RpcSchemas.dispatchCommand.output,
@@ -2256,6 +2312,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
+  WsMachinesSubscribeThreadRpc,
+  WsMachinesReleaseRpc,
+  WsMachinesInspectHostsRpc,
+  WsMachinesConnectHostRpc,
+  WsMachinesDisconnectHostRpc,
+  WsMachinesDeleteUntrackedRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

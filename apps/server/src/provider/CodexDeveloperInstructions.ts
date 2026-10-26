@@ -3,30 +3,30 @@ import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeI
 
 import {
   T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
-  T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_ORCHESTRATION_SECTIONS,
+  T3_NO_GATED_TOOLS,
+  t3GatedToolInstructions,
+  type T3GatedTools,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 /** Codex silently truncates additionalContext values over 1,000 tokens, counted as UTF-8 bytes / 4. */
 export const CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES = 4_000;
 
-export interface T3CodeToolAvailability {
+export interface T3CodeToolAvailability extends T3GatedTools {
   readonly browser: boolean;
-  readonly device: boolean;
 }
 
 const normalizeAvailability = (
   availability: boolean | T3CodeToolAvailability,
 ): T3CodeToolAvailability =>
-  typeof availability === "boolean" ? { browser: availability, device: false } : availability;
+  typeof availability === "boolean"
+    ? { browser: availability, ...T3_NO_GATED_TOOLS }
+    : availability;
 
 /** Instructions for unavailable tools would steer the model away from its remaining automation. */
 const toolInstructions = (availability: boolean | T3CodeToolAvailability): string => {
   const tools = normalizeAvailability(availability);
-  return [
-    tools.browser ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "",
-    tools.device ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS : "",
-  ]
+  return [tools.browser ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "", t3GatedToolInstructions(tools)]
     .filter(Boolean)
     .join("\n\n");
 };

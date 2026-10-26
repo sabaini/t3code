@@ -1628,6 +1628,39 @@ it("pins the test-card world: correct billing source, running servers and a sign
   assert.include(world.app, "signed in as free@example.com");
 });
 
+it.effect("answers machine calls with T3's handlers and gates machine text on access", () =>
+  Effect.gen(function* () {
+    const cases = NodeFS.readFileSync(new URL("./cases/machines.ndjson", import.meta.url), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => decodeDeviceCase(line));
+    const options = { model: "claude-sonnet-5-5", keepUserInstructions: false } as const;
+    const text = (machineAccess: boolean) =>
+      JSON.stringify(buildBase(template, { ...options, machineAccess }).system);
+    assert.include(text(true), "## T3 Code machines");
+    assert.notInclude(text(false), "## T3 Code machines");
+
+    const sample = makeSample(cases[0]!, buildBase(template, { ...options, machineAccess: true }));
+    yield* withDevices(sample);
+    const acquired = yield* sample.machines!.call("machine_acquire", { profile: "vm" });
+    assert.isFalse(acquired.isError, acquired.text);
+    assert.include(acquired.text, "ssh -F ");
+    assert.include(acquired.text, "vm-1");
+    assert.include(sample.machines!.describe().join(""), "vm-1");
+    assert.isFalse((yield* sample.machines!.call("machine_release", { name: "vm-1" })).isError);
+    assert.isEmpty(sample.machines!.describe());
+
+    const off = makeSample(
+      { ...cases[0]!, setup: { ...cases[0]!.setup, world: { machineAgentAccess: false } } },
+      buildBase(template, options),
+    );
+    yield* withDevices(off);
+    const refused = yield* off.machines!.call("machine_acquire", { profile: "vm" });
+    assert.isTrue(refused.isError);
+    assert.include(refused.text, "Agent machine access is off");
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.each([
   ["Do not use SSH for UI but use device_open and its returned command.", "managed"],
   ["Use device_open instead of SSH for screenshots.", "managed"],

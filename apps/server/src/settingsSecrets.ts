@@ -4,6 +4,7 @@ import {
   CloudSpeechCredentials,
   CodexSettings,
   EasDeviceHostConfig,
+  MachineHostConfig,
   type ProviderInstanceConfig,
   type ServerSettings,
   type SettingsSecretValue,
@@ -51,6 +52,7 @@ const textGeneratorSecretFields = secretSettingsFields(TextGeneratorConfig);
 const voiceSecretFields = secretSettingsFields(CloudSpeechCredentials);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
+const machineHostSecretFields = secretSettingsFields(MachineHostConfig);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
 
 export interface SettingsSecret {
@@ -247,6 +249,17 @@ function mapSecretFieldGroups(
       ) as SimlockDeviceHostConfig,
   );
 
+  const machineHosts = settings.machineHosts.map(
+    (host) =>
+      mapFields(
+        host,
+        machineHostSecretFields,
+        (field, serverHost) =>
+          `machine-host-${encode(host.id)}-${encode(field)}` +
+          (serverHost === null ? "" : `-${encode(serverHost)}`),
+      ) as MachineHostConfig,
+  );
+
   return {
     ...settings,
     cloudSpeechCredentials: mapFields(
@@ -260,6 +273,7 @@ function mapSecretFieldGroups(
     textGenerators,
     easDeviceHosts,
     simlockDeviceHosts,
+    machineHosts,
   };
 }
 

@@ -113,6 +113,7 @@ import {
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import {
   t3AcpPromptWithInstructions,
+  t3GatedToolsOf,
   type T3AcpInstructionState,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
@@ -7913,7 +7914,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const instructionState = {
             interactionMode: turnInput.runtimePolicy.interactionMode,
             hasT3Mcp: mcpSession !== undefined,
-            hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
+            tools: t3GatedToolsOf(mcpSession?.capabilities),
           } satisfies T3AcpInstructionState;
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
           const compactionMarker = (yield* Ref.get(compactionMarkers)).get(sessionId);

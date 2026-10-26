@@ -224,6 +224,10 @@ Passes per case, main's text → the request_secret guidance change stacked on t
 | ctrl-oauth (guard)           | 3/3 → 3/3                   | 6/6 → 6/6           | 6/6 → 6/6                             |
 | other guards and controls    | all pass → all pass         | all pass → all pass | all pass → all pass (prod-config 5/6) |
 
+## Machine cases
+
+`cases/machines.ndjson` checks that agents with machine access route system work to LXD machines: `MACH-01` verifies an install script on a machine instead of the workstation, `MACH-02` creates two machines for a cluster and releases both, and `MACH-03` is a control where a plain test run stays local. `world.machineAgentAccess` gives the session the `machines` capability and T3's machine text; `world.machineProfiles` replaces the default `vm` and `container` profiles. Machine results come from T3's real machine handlers over an in-memory MachineService, and the shell simulator plays the machines.
+
 ## Where T3's text lives
 
 - `packages/provider-core/src/server/runtimeInstructions.ts`
