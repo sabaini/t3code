@@ -7,6 +7,8 @@ import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
+import desktopPackageJson from "../../package.json" with { type: "json" };
+
 export interface ElectronAppMetadata {
   readonly appVersion: string;
   readonly appPath: string;
@@ -110,11 +112,20 @@ export function toSystemLocaleTag(identifier: string, hourCycle?: "h12" | "h23")
   }
 }
 
+/**
+ * Unpackaged runs (`electron dist-electron/main.cjs`) have no package.json beside the
+ * entry, so Electron reports its own version. SSH remotes download the release named
+ * by this version, and v<electron> does not exist.
+ */
+export function resolveAppVersion(): string {
+  return Electron.app.isPackaged ? Electron.app.getVersion() : desktopPackageJson.version;
+}
+
 /** @public */
 export const make = ElectronApp.of({
   metadata: Effect.gen(function* () {
     const appVersion = yield* Effect.try({
-      try: () => Electron.app.getVersion(),
+      try: resolveAppVersion,
       catch: (cause) =>
         new ElectronAppMetadataReadError({
           property: "app-version",
