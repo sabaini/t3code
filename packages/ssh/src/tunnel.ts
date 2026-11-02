@@ -491,9 +491,15 @@ if ! t3_runtime_ready; then
   T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
   trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
   t3_fetch() {
-    if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
-    elif command -v wget >/dev/null 2>&1; then wget -q --timeout=30 --tries=1 "$1" -O "$2"
+    T3_FETCH_STATUS=0
+    if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2" || T3_FETCH_STATUS=$?
+    elif command -v wget >/dev/null 2>&1; then wget -q --timeout=30 --tries=1 "$1" -O "$2" || T3_FETCH_STATUS=$?
     else printf 'Remote host needs curl or wget to download %s.\\n' "$T3_ARCHIVE" >&2; exit 1
+    fi
+    if [ "$T3_FETCH_STATUS" -ne 0 ]; then
+      # Name the URL: a bare "curl: (22) ... 404" hides which release was missing.
+      printf 'Could not download t3 %s for %s-%s from %s\\n' "$T3_ARCHIVE_VERSION" "$T3_PLATFORM" "$T3_ARCH" "$1" >&2
+      exit "$T3_FETCH_STATUS"
     fi
   }
   t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/SHA256SUMS" "$T3_STAGING/SHA256SUMS" @@T3_ARCHIVE_CHECKSUMS_SECONDS@@

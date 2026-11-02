@@ -82,7 +82,7 @@ import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
 
 if (process.argv.includes("--version")) {
   try {
-    NodeFS.writeSync(process.stdout.fd, `${Electron.app.getVersion()}\n`);
+    NodeFS.writeSync(process.stdout.fd, `${ElectronApp.resolveAppVersion()}\n`);
   } catch (error) {
     if (!(error instanceof Error) || !("code" in error) || error.code !== "EPIPE") throw error;
   }
