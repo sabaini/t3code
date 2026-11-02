@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
+import desktopPackageJson from "../../package.json" with { type: "json" };
 
 const defaultInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -38,6 +39,25 @@ const makeEnvironment = (
 ) => DesktopEnvironment.DesktopEnvironment.pipe(Effect.provide(layerEnvironment(overrides, env)));
 
 describe("DesktopEnvironment", () => {
+  it.effect("uses the T3 package version when an unpackaged Electron reports its own version", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({ appVersion: "44.9.3" });
+
+      assert.equal(environment.appVersion, desktopPackageJson.version);
+    }),
+  );
+
+  it.effect("preserves the installed version for packaged releases", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        isPackaged: true,
+        appVersion: "0.1.3-preview.20261024.1",
+      });
+
+      assert.equal(environment.appVersion, "0.1.3-preview.20261024.1");
+    }),
+  );
+
   it.effect("uses the packaged Windows server sidecar as the backend root", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment({
