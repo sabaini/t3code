@@ -7,6 +7,7 @@ import * as MachineHosts from "./machines/MachineHosts.ts";
 import * as MachineLeaseStore from "./machines/MachineLeaseStore.ts";
 import * as MachineService from "./machines/MachineService.ts";
 import * as MachineThreads from "./machines/MachineThreads.ts";
+import * as VoiceTranscription from "./voice/VoiceTranscription.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
@@ -637,6 +638,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerIdleCompactionWorker,
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   layerMachines,
+  VoiceTranscription.layer,
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),
     Layer.provide(

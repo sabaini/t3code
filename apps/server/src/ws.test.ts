@@ -48,6 +48,7 @@ import * as DeviceService from "./device/DeviceService.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as MachineHosts from "./machines/MachineHosts.ts";
 import * as MachineService from "./machines/MachineService.ts";
+import * as VoiceTranscription from "./voice/VoiceTranscription.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
@@ -550,6 +551,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(MachineService.MachineService)({ sshConfigPath: () => "/unused" }),
   Layer.mock(MachineHosts.MachineHosts)({}),
+  Layer.mock(VoiceTranscription.VoiceTranscription)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(HostResources.HostResources)({}),

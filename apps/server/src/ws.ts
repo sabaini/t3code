@@ -25,6 +25,7 @@ import {
   AcpRegistryOperationError,
   CommandId,
   MachineRpcError,
+  VoiceRpcError,
   authScopeResponse,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
@@ -195,6 +196,7 @@ import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as MachineHosts from "./machines/MachineHosts.ts";
 import * as MachineService from "./machines/MachineService.ts";
+import * as VoiceTranscription from "./voice/VoiceTranscription.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -1326,6 +1328,9 @@ export const layerWsRpc = (
       const machineHosts = yield* MachineHosts.MachineHosts;
       const machineRpcError = (error: { readonly message: string }) =>
         new MachineRpcError({ message: error.message });
+      const voiceTranscription = yield* VoiceTranscription.VoiceTranscription;
+      const voiceRpcError = (error: VoiceTranscription.VoiceTranscriptionError) =>
+        new VoiceRpcError({ reason: error.reason, message: error.detail });
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
       const orchestrationEngine = yield* Orchestrator.OrchestratorV2;
@@ -3147,6 +3152,16 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.machinesDeleteUntracked]: (input) =>
           machineService.deleteUntracked(input).pipe(Effect.mapError(machineRpcError)),
+        [WS_METHODS.voiceSubscribeModelStatus]: (_input) => voiceTranscription.status,
+        [WS_METHODS.voiceInstallModel]: (_input) =>
+          voiceTranscription.install.pipe(Effect.mapError(voiceRpcError)),
+        [WS_METHODS.voiceRemoveModel]: (_input) =>
+          voiceTranscription.remove.pipe(Effect.mapError(voiceRpcError)),
+        [WS_METHODS.voiceTranscribe]: (input) =>
+          voiceTranscription.transcribe(Uint8Array.fromBase64(input.pcm16)).pipe(
+            Effect.map((text) => ({ text })),
+            Effect.mapError(voiceRpcError),
+          ),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>
             Effect.gen(function* () {

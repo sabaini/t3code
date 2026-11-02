@@ -10,6 +10,8 @@ const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "@yuuang/",
   "@ff-labs/",
   "@napi-rs/keyring",
+  // sherpa-onnx-node loads its addon from a sibling platform package.
+  "sherpa-onnx",
   "@clerk/electron-passkeys",
   "node-gyp-build",
   "node-addon-api",

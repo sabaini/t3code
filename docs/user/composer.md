@@ -177,6 +177,24 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Voice input on web and desktop
+
+Download the speech model once in **Settings → Chat → Voice input**. The microphone
+then shows in the composer. Click it, or press `mod+shift+.`, and talk. Click the
+check mark or press the shortcut again to insert the text where your cursor was.
+Review it and send as usual. Recordings can be up to five minutes long.
+
+Transcription runs on the environment the thread belongs to, not on your device or
+in the cloud. That environment downloads NVIDIA's Parakeet model (about 670 MB) and
+needs a few seconds of CPU per minute of speech. It understands 25 European
+languages and adds punctuation. Each environment has its own model, so with several
+connected, choose one at the top of Settings before downloading. A remote
+environment transcribes for every client that connects to it. Audio is sent to the
+environment, transcribed, and discarded. **Remove model** frees the disk space.
+
+The browser asks for microphone access on first use. If you blocked it, allow the
+microphone in the site's settings and try again.
+
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,

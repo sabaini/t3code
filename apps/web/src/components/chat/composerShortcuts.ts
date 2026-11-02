@@ -31,6 +31,9 @@ export function composerShortcutCommands(
     "composer.branch": ({ event }) => {
       if (!event.repeat) branchToolbarRef.current?.openBranchPicker();
     },
+    "composer.voiceInput": ({ event }) => {
+      if (!event.repeat) composerRef.current?.toggleVoiceInput();
+    },
     "composer.previousWorktree": ({ event }) => {
       if (!event.repeat) branchToolbarRef.current?.usePreviousWorktree();
     },

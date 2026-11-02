@@ -202,6 +202,8 @@ import {
   ComposerRestingImagePreviews,
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ComposerVoiceInputControl } from "./ComposerVoiceInputControl";
+import { useComposerVoiceInput } from "./useComposerVoiceInput";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -305,6 +307,7 @@ export interface ChatComposerHandle {
   openModelPicker: () => void;
   stepReasoningEffort: (direction: 1 | -1) => void;
   toggleModelPicker: () => void;
+  toggleVoiceInput: () => void;
   openControl: (command: KeybindingCommand) => void;
   isModelPickerOpen: () => boolean;
   isCaretAtStart: () => boolean;
@@ -1810,6 +1813,42 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return true;
   };
   const applyPromptReplacementStable = useStableCallback(applyPromptReplacement);
+  const voiceInput = useComposerVoiceInput({
+    environmentId,
+    // A pending question's answer is its own draft, though the composer edits both.
+    ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
+    disabled: projectSelectionRequired || isChoiceOnlyPendingQuestion || activePendingIsResponding,
+    readDraft: () => {
+      const text = promptRef.current;
+      return {
+        text,
+        selection: composerEditorRef.current?.readSelectionRange() ?? {
+          start: text.length,
+          end: text.length,
+        },
+      };
+    },
+    commitDraft: (text, cursor) => {
+      // Replacing only the changed span keeps chips and undo history around it intact.
+      const current = promptRef.current;
+      let start = 0;
+      while (start < current.length && current[start] === text[start]) start++;
+      let currentEnd = current.length;
+      let nextEnd = text.length;
+      while (
+        currentEnd > start &&
+        nextEnd > start &&
+        current[currentEnd - 1] === text[nextEnd - 1]
+      ) {
+        currentEnd--;
+        nextEnd--;
+      }
+      applyPromptReplacement(start, currentEnd, text.slice(start, nextEnd), {
+        expandedCursorAfterReplace: cursor,
+      });
+    },
+  });
+  const { available: voiceInputAvailable, toggle: toggleVoiceInput } = voiceInput;
 
   const readComposerSnapshot = (): {
     value: string;
@@ -2075,6 +2114,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (
       noProviderAvailable ||
       isSendDisabled ||
+      voiceInput.blocksSubmission ||
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
     ) {
       event?.preventDefault();
@@ -2867,6 +2907,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor },
         ),
       openModelPicker: openModelPickerStable,
+      toggleVoiceInput: () => {
+        if (voiceInputAvailable) toggleVoiceInput();
+      },
       stepReasoningEffort: (direction) => {
         if (noProviderAvailable || pendingUserInputs.length > 0 || isEditingQueuedMessage) {
           return;
@@ -3086,6 +3129,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       interactionMode,
       planModeUiEnabled,
       compactThreadContextStable,
+      voiceInputAvailable,
+      toggleVoiceInput,
     ],
   );
 
@@ -3435,7 +3480,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     disabled={
                       projectSelectionRequired ||
                       isChoiceOnlyPendingQuestion ||
-                      activePendingIsResponding
+                      activePendingIsResponding ||
+                      voiceInput.blocksSubmission
                     }
                   />
                 </ComposerContextActionsContext>
@@ -3501,6 +3547,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
+                  {voiceInput.available ? (
+                    <ComposerVoiceInputControl
+                      voice={voiceInput}
+                      shortcutLabel={shortcutLabelForCommand(keybindings, "composer.voiceInput", {
+                        context: { terminalFocus: false, terminalOpen, modelPickerOpen: false },
+                      })}
+                    />
+                  ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
@@ -3534,7 +3588,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     promptHasText={prompt.trim().length > 0}
                     isSendBusy={isSendBusy}
-                    sendDisabledReason={sendDisabledReason}
+                    sendDisabledReason={
+                      voiceInput.blocksSubmission ? "Finish voice input first" : sendDisabledReason
+                    }
                     isEnvironmentUnavailable={
                       environmentUnavailable !== null ||
                       noProviderAvailable ||

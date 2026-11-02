@@ -100,6 +100,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
 import { AdvancedSettings } from "./AdvancedSettings";
+import { VoiceInputSettings } from "./VoiceInputSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
 import { StorageCleanupSections } from "./StorageSettings";
 import { UpdateTrackSwitchDialog } from "./UpdateTrackSwitchDialog";
@@ -1229,6 +1230,8 @@ export function ChatSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      <VoiceInputSettings />
     </SettingsPageContainer>
   );
 }

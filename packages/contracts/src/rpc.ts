@@ -321,6 +321,12 @@ import {
   UntrackedMachineInput,
 } from "./machines.ts";
 import {
+  VoiceModelStatus,
+  VoiceRpcError,
+  VoiceTranscribeInput,
+  VoiceTranscribeResult,
+} from "./voice.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
@@ -513,6 +519,11 @@ export const WS_METHODS = {
   machinesConnectHost: "machines.connectHost",
   machinesDisconnectHost: "machines.disconnectHost",
   machinesDeleteUntracked: "machines.deleteUntracked",
+
+  voiceSubscribeModelStatus: "voice.subscribeModelStatus",
+  voiceInstallModel: "voice.installModel",
+  voiceRemoveModel: "voice.removeModel",
+  voiceTranscribe: "voice.transcribe",
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -1767,6 +1778,31 @@ const WsMachinesDeleteUntrackedRpc = Rpc.make(WS_METHODS.machinesDeleteUntracked
   error: MachineFailure,
 });
 
+const VoiceFailure = Schema.Union([VoiceRpcError, EnvironmentAuthorizationError]);
+
+const WsVoiceSubscribeModelStatusRpc = Rpc.make(WS_METHODS.voiceSubscribeModelStatus, {
+  payload: Schema.Struct({}),
+  success: VoiceModelStatus,
+  error: VoiceFailure,
+  stream: true,
+});
+
+const WsVoiceInstallModelRpc = Rpc.make(WS_METHODS.voiceInstallModel, {
+  payload: Schema.Struct({}),
+  error: VoiceFailure,
+});
+
+const WsVoiceRemoveModelRpc = Rpc.make(WS_METHODS.voiceRemoveModel, {
+  payload: Schema.Struct({}),
+  error: VoiceFailure,
+});
+
+const WsVoiceTranscribeRpc = Rpc.make(WS_METHODS.voiceTranscribe, {
+  payload: VoiceTranscribeInput,
+  success: VoiceTranscribeResult,
+  error: VoiceFailure,
+});
+
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
   payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
   success: OrchestrationV2RpcSchemas.dispatchCommand.output,
@@ -2227,6 +2263,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsMachinesConnectHostRpc,
   WsMachinesDisconnectHostRpc,
   WsMachinesDeleteUntrackedRpc,
+  WsVoiceSubscribeModelStatusRpc,
+  WsVoiceInstallModelRpc,
+  WsVoiceRemoveModelRpc,
+  WsVoiceTranscribeRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

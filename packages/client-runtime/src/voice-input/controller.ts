@@ -128,7 +128,10 @@ let activeTranscriptionOperation: Promise<unknown> | null = null;
 
 function acquireSession(): VoiceInputSession | null {
   if (activeSession) return null;
-  const { promise, resolve } = Promise.withResolvers<void>();
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
   const token = { abandoned: false, released: promise, release: resolve };
   activeSession = token;
   return token;
@@ -167,6 +170,7 @@ function preparationErrorMessage(error: unknown): string {
   if (errorCode(error) === "unsupported-locale") {
     return "Voice transcription is not available for this language.";
   }
+  if (errorCode(error) === "setup-required" && error instanceof Error) return error.message;
   return "Could not prepare voice transcription.";
 }
 
@@ -174,7 +178,12 @@ function transcriptionErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message === "voice-operation-busy") {
     return "Voice transcription is still finishing. Try again shortly.";
   }
+  if (errorCode(error) === "setup-required" && error instanceof Error) return error.message;
   return "Could not transcribe this recording.";
+}
+
+function errorActionFor(error: unknown): VoiceInputState["errorAction"] {
+  return errorCode(error) === "setup-required" ? "settings" : "retry";
 }
 
 const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
@@ -250,7 +259,9 @@ export class VoiceInputController {
           transcriber.prepare({ signal: abortController.signal }),
         );
       } catch (error) {
-        if (this.isCurrent(operationToken)) this.setError(preparationErrorMessage(error), "retry");
+        if (this.isCurrent(operationToken)) {
+          this.setError(preparationErrorMessage(error), errorActionFor(error));
+        }
         return;
       }
       if (!this.isCurrent(operationToken)) return;
@@ -398,7 +409,7 @@ export class VoiceInputController {
         );
       } catch (error) {
         if (this.isCurrent(operationToken)) {
-          this.setError(transcriptionErrorMessage(error), "retry");
+          this.setError(transcriptionErrorMessage(error), errorActionFor(error));
         }
         return;
       }

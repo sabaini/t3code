@@ -60,6 +60,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.machinesDisconnectHost]: AuthSettingsWriteScope,
   [WS_METHODS.machinesDeleteUntracked]: AuthSettingsWriteScope,
 
+  [WS_METHODS.voiceInstallModel]: AuthSettingsWriteScope,
+  [WS_METHODS.voiceRemoveModel]: AuthSettingsWriteScope,
+  [WS_METHODS.voiceTranscribe]: AuthOrchestrationOperateScope,
+
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,

@@ -12,8 +12,10 @@ export type VoiceTranscriber = {
   readonly prepare: (options: VoiceTranscriptionOptions) => Promise<PreparedVoiceTranscription>;
 };
 
+/** `setup-required` messages are shown as-is and point the user to settings. */
 export type VoiceTranscriptionErrorCode =
   | "unavailable"
+  | "setup-required"
   | "unsupported-locale"
   | "preparation-failed"
   | "transcription-failed"

@@ -595,6 +595,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["enter return command ctrl multiline prompt new line composer"],
   },
   {
+    id: "voice-input-model",
+    title: "Voice input",
+    to: "/settings/chat",
+    searchTerms: ["voice dictation speech to text microphone transcribe parakeet model download"],
+  },
+  {
     id: "follow-up-behavior",
     title: "Follow-up behavior",
     to: "/settings/chat",
