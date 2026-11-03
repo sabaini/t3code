@@ -256,6 +256,8 @@ const missingAsNone = <A>(effect: Effect.Effect<A, LxdError>) =>
     Effect.asSome,
     Effect.catchIf(isMissing, () => Effect.succeed(Option.none<A>())),
   );
+const isWaitDeadline = (error: LxdError) =>
+  error._tag === "LxdRequestError" && error.reason === "context deadline exceeded";
 const missingAsDone = (effect: Effect.Effect<void, LxdError>) =>
   effect.pipe(Effect.catchIf(isMissing, () => Effect.void));
 
@@ -352,7 +354,9 @@ export const makeLxdClient = Effect.fn("LxdClient.make")(function* (
     while (true) {
       const response = yield* request("GET", `${operationPath}/wait`, {
         query: { timeout: String(OPERATION_WAIT_SECONDS) },
-      });
+      }).pipe(Effect.catchIf(isWaitDeadline, () => Effect.void));
+      // LXD answers a wait that outlives its timeout with this error, not the running operation.
+      if (response === undefined) continue;
       const result = yield* decode(OperationResult, response.metadata, operation);
       // Below 200 the operation is still pending or running.
       if (result.status_code < 200) continue;

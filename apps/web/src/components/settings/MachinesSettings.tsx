@@ -43,6 +43,8 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import {
+  machineHostNeedsAttention,
+  machineHostsAttention,
   machineHostSummary,
   machineProfileDraft,
   type MachineProfileDraft,
@@ -56,6 +58,7 @@ import {
 import { ScopedSwitch } from "./ScopedSwitch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { searchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
@@ -323,8 +326,114 @@ function MachineProfileForm({
   );
 }
 
+const MACHINE_HOSTS_DESCRIPTION =
+  "Machines run on LXD servers of yours, in a project T3 Code can't leave.";
+
 function MachineHostsSetting() {
-  const { scope, environment, connectedEnvironments } = useSettingsScope();
+  const { environments } = useSettingsScope();
+  return environments.length > 1 ? <MachineHostsSummary /> : <EnvironmentMachineHosts />;
+}
+
+/** One line per environment: each connects its own servers, so none is picked for you. */
+function MachineHostsSummary() {
+  const { scope, environments } = useSettingsScope();
+  const [connecting, setConnecting] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+  } | null>(null);
+  return (
+    <SettingsRow
+      {...searchableSetting("machine-hosts")}
+      serverScoped
+      settingKeys={["machineHosts"]}
+      description={`${MACHINE_HOSTS_DESCRIPTION} Each environment connects its own.`}
+    >
+      <div className="pt-1 pb-2">
+        {environments.map((environment) => (
+          <MachineHostsSummaryLine
+            key={environment.environmentId}
+            environment={environment}
+            label={settingsScopeEnvironmentLabel(environment, environments)}
+            projectScope={scope.kind === "project" || scope.kind === "checkout"}
+            onConnect={setConnecting}
+          />
+        ))}
+        {connecting ? (
+          <ConnectMachineHostDialog
+            environmentId={connecting.environmentId}
+            environmentLabel={connecting.label}
+            onClose={() => setConnecting(null)}
+          />
+        ) : null}
+      </div>
+    </SettingsRow>
+  );
+}
+
+function MachineHostsSummaryLine({
+  environment,
+  label,
+  projectScope,
+  onConnect,
+}: {
+  environment: ReturnType<typeof useSettingsScope>["environments"][number];
+  label: string;
+  projectScope: boolean;
+  onConnect: (target: { readonly environmentId: EnvironmentId; readonly label: string }) => void;
+}) {
+  const { selectScope } = useSettingsScope();
+  const environmentId =
+    environment.connection.phase === "connected" && environment.serverConfig
+      ? environment.environmentId
+      : null;
+  const hosts = environment.serverConfig?.settings.machineHosts ?? [];
+  const canConfigure = useEnvironmentScope(environmentId, AuthSettingsWriteScope) && !projectScope;
+  const inspection = useEnvironmentQuery(
+    environmentId !== null && hosts.length > 0
+      ? machineEnvironment.hosts({ environmentId, input: {} })
+      : null,
+  );
+  const attention =
+    inspection.error ?? (inspection.data ? machineHostsAttention(inspection.data) : null);
+  return (
+    <div className="flex items-center gap-3 border-t border-border/50 py-2">
+      <p className="w-52 shrink-0 truncate text-sm font-medium">{label}</p>
+      <div className="flex min-w-0 flex-1 items-center gap-2 text-xs">
+        <p className="truncate text-muted-foreground">
+          {environmentId === null
+            ? "Not connected"
+            : hosts.length === 0
+              ? "No LXD server"
+              : hosts.map((host) => `${host.label} · ${host.project}`).join(", ")}
+        </p>
+        {attention !== null ? (
+          <p className="flex min-w-0 items-center gap-1 text-warning">
+            <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+            <span className="truncate">{attention}</span>
+          </p>
+        ) : null}
+      </div>
+      {environmentId === null ? null : hosts.length === 0 ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!canConfigure}
+          onClick={() => onConnect({ environmentId, label })}
+        >
+          <PlusIcon className="size-3.5" /> Connect server
+        </Button>
+      ) : (
+        // Servers belong to the environment, so managing them leaves any selected project.
+        <Button size="sm" variant="ghost" onClick={() => selectScope({ machine: environmentId })}>
+          Manage
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function EnvironmentMachineHosts() {
+  const { scope, environment } = useSettingsScope();
   const environmentId =
     environment?.connection.phase === "connected" && environment.serverConfig
       ? environment.environmentId
@@ -347,14 +456,7 @@ function MachineHostsSetting() {
       {...searchableSetting("machine-hosts")}
       serverScoped
       settingKeys={["machineHosts"]}
-      description={
-        <>
-          Machines run on LXD servers of yours, in a project T3 Code can't leave.
-          {connectedEnvironments.length > 1 && environment
-            ? ` Showing ${environment.label}.`
-            : null}
-        </>
-      }
+      description={MACHINE_HOSTS_DESCRIPTION}
       control={
         <>
           {hosts.length > 0 ? (
@@ -413,6 +515,7 @@ function MachineHostsSetting() {
             {connecting ? (
               <ConnectMachineHostDialog
                 environmentId={environmentId}
+                environmentLabel={environment?.label}
                 onClose={() => setConnecting(false)}
               />
             ) : null}
@@ -439,9 +542,7 @@ function MachineHostRow({
   const [busy, setBusy] = useState(false);
   const status = inspection?.status;
   const fixes = status ? machineProjectFixCommands(host.project, status) : [];
-  const problem =
-    inspection?.error !== undefined ||
-    (status !== undefined && (!status.versionSupported || fixes.length > 0));
+  const problem = machineHostNeedsAttention(inspection);
   const run = async () => {
     setBusy(true);
     const result = await disconnect({ environmentId, input: { hostId: host.id } });
@@ -640,9 +741,11 @@ function UntrackedMachines({
 
 function ConnectMachineHostDialog({
   environmentId,
+  environmentLabel,
   onClose,
 }: {
   environmentId: EnvironmentId;
+  environmentLabel: string | undefined;
   onClose: () => void;
 }) {
   const connect = useAtomCommand(machineEnvironment.connectHost, { reportFailure: false });
@@ -681,7 +784,11 @@ function ConnectMachineHostDialog({
           }}
         >
           <DialogHeader>
-            <DialogTitle>Connect an LXD server</DialogTitle>
+            <DialogTitle>
+              {environmentLabel
+                ? `Connect an LXD server to ${environmentLabel}`
+                : "Connect an LXD server"}
+            </DialogTitle>
             <DialogDescription>
               Paste a trust token for a project on the server. T3 Code's certificate there only
               reaches that project.
