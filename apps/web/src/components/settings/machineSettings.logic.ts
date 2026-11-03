@@ -1,4 +1,6 @@
 import {
+  type MachineHostInspection,
+  type MachineHostsInspection,
   MachineImage,
   MachineProfile,
   MachineProfileName,
@@ -121,6 +123,30 @@ export function machineProjectFixCommands(
       : [`lxc project set ${project} ${status.missing.join(" ")}`]),
     ...status.unsafe.map((key) => `lxc project unset ${project} ${key}`),
   ];
+}
+
+/** Whether a server's last check says it can't make new machines. */
+export function machineHostNeedsAttention(inspection: MachineHostInspection | undefined): boolean {
+  if (inspection === undefined) return false;
+  if (inspection.error !== undefined) return true;
+  const status = inspection.status;
+  return (
+    status !== undefined &&
+    (!status.versionSupported || status.missing.length > 0 || status.unsafe.length > 0)
+  );
+}
+
+/** What an environment's summary line warns about, or null when its servers are fine. */
+export function machineHostsAttention(inspection: MachineHostsInspection): string | null {
+  const failing = inspection.hosts.filter(machineHostNeedsAttention).length;
+  const untracked = inspection.untracked.length;
+  const notes = [
+    ...(failing === 0 ? [] : [failing === 1 ? "Needs attention" : `${failing} need attention`]),
+    ...(untracked === 0
+      ? []
+      : [`${untracked} ${untracked === 1 ? "machine" : "machines"} without a thread`]),
+  ];
+  return notes.length === 0 ? null : notes.join(" · ");
 }
 
 /** Like "LXD 6.10 · VMs and containers". */
