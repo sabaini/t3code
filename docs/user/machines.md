@@ -51,9 +51,11 @@ To cap what agents can use in total, set limits on the project, for example
 
 In **Settings → Devices → Machines**, select **Connect server** and paste the token. Settings
 then shows the server's LXD version, whether it can run virtual machines, and anything about the
-project that stops T3 Code from creating machines there, with the commands that fix it. Servers
-belong to one environment: with several environments, choose one in the "Applying settings for …"
-sentence first.
+project that stops T3 Code from creating machines there, with the commands that fix it.
+
+Servers belong to one environment, and only agents on that environment can use them. With several
+environments selected, each gets a line with its own **Connect server**. A trust token works once,
+so make a new one for each environment you connect.
 
 **Disconnect** forgets the server and removes T3 Code's certificate there. Machines on it stay.
 Connect the same server and project again to use or release them.
