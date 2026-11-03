@@ -77,25 +77,36 @@ export const probeServerCertificate = Effect.fn("LxdTls.probeServerCertificate")
 });
 
 /**
- * LXD certs are self-signed leaves rarely naming the address used, so the cert is its own CA
- * and the fingerprint pins it. HTTP/1.1 only: undici 8's HTTP/2 sessions emit unhandled stream
- * errors on idle timeouts (see outboundHttp.ts), and LXD's operation waits sit idle.
+ * LXD certs are self-signed `CA:FALSE` leaves, which BoringSSL (Electron) refuses as their own
+ * trust anchor, so every connection is checked against the pinned fingerprint instead of a CA.
+ * HTTP/1.1 only: undici 8's HTTP/2 sessions emit unhandled stream errors on idle timeouts (see
+ * outboundHttp.ts), and LXD's operation waits sit idle.
  */
 export function makePinnedAgent(identity: LxdIdentity): Undici.Agent {
   const pinned = certificateFingerprint(identity.serverCertificate);
-  return new (loadUndici().Agent)({
+  const undici = loadUndici();
+  const connectTls = undici.buildConnector({
+    cert: identity.clientCertificate,
+    key: identity.clientKey,
+    rejectUnauthorized: false,
+    // A resumed session skips the handshake that the fingerprint check below relies on.
+    maxCachedSessions: 0,
+  });
+  return new undici.Agent({
     allowH2: false,
     // Operation waits are bounded by their own `timeout` query, well below this.
     headersTimeout: 120_000,
     bodyTimeout: 120_000,
-    connect: {
-      cert: identity.clientCertificate,
-      key: identity.clientKey,
-      ca: identity.serverCertificate,
-      checkServerIdentity: (_host, peer) =>
-        certificateFingerprint(peer.raw) === pinned
-          ? undefined
-          : new Error("The LXD server presented a different certificate than the one pinned."),
-    },
+    connect: (options, callback) =>
+      connectTls(options, (error, socket) => {
+        if (error) return callback(error, null);
+        const peer = socket instanceof NodeTls.TLSSocket ? socket.getPeerCertificate() : undefined;
+        if (peer?.raw && certificateFingerprint(peer.raw) === pinned) return callback(null, socket);
+        socket.destroy();
+        callback(
+          new Error("The LXD server presented a different certificate than the one pinned."),
+          null,
+        );
+      }),
   });
 }
