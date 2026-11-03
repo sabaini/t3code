@@ -79,8 +79,8 @@ export const probeServerCertificate = Effect.fn("LxdTls.probeServerCertificate")
 /**
  * LXD certs are self-signed `CA:FALSE` leaves, which BoringSSL (Electron) refuses as their own
  * trust anchor, so every connection is checked against the pinned fingerprint instead of a CA.
- * HTTP/1.1 only: undici 8's HTTP/2 sessions emit unhandled stream errors on idle timeouts (see
- * outboundHttp.ts), and LXD's operation waits sit idle.
+ * HTTP/1.1 only: LXD's exec websockets can't run over HTTP/2, and undici 8's HTTP/2 sessions emit
+ * unhandled stream errors on the idle timeouts of LXD's operation waits (see outboundHttp.ts).
  */
 export function makePinnedAgent(identity: LxdIdentity): Undici.Agent {
   const pinned = certificateFingerprint(identity.serverCertificate);
@@ -91,6 +91,8 @@ export function makePinnedAgent(identity: LxdIdentity): Undici.Agent {
     rejectUnauthorized: false,
     // A resumed session skips the handshake that the fingerprint check below relies on.
     maxCachedSessions: 0,
+    // The Agent's own `allowH2` doesn't reach a custom connector, which would offer h2 in ALPN.
+    allowH2: false,
   });
   return new undici.Agent({
     allowH2: false,

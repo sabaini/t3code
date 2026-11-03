@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - the fixture is a raw HTTPS server with openssl-made certificates.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import * as NodeHttps from "node:https";
+import * as NodeHttp2 from "node:http2";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -51,16 +51,18 @@ const selfSignedLeaf = (directory: string, name: string) => {
 
 const listen = (credentials: { certificate: string; key: string }) =>
   Effect.acquireRelease(
-    Effect.callback<NodeHttps.Server>((resume) => {
-      const server = NodeHttps.createServer(
+    Effect.callback<NodeHttp2.Http2SecureServer>((resume) => {
+      const server = NodeHttp2.createSecureServer(
         // LXD takes any client certificate at the TLS layer and authorizes it per request.
+        // Like LXD it offers HTTP/2, where its exec websockets can't connect.
         {
           cert: credentials.certificate,
           key: credentials.key,
           requestCert: true,
           rejectUnauthorized: false,
+          allowHTTP1: true,
         },
-        (_request, response) => response.end("ok"),
+        (request, response) => response.end(request.httpVersion),
       );
       server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
     }),
@@ -68,7 +70,7 @@ const listen = (credentials: { certificate: string; key: string }) =>
   );
 
 describe("makePinnedAgent", () => {
-  it.live("trusts only the pinned self-signed certificate", () =>
+  it.live("trusts only the pinned self-signed certificate, over HTTP/1.1", () =>
     Effect.gen(function* () {
       const directory = yield* scratchDirectory;
       const served = selfSignedLeaf(directory, "server");
@@ -100,7 +102,7 @@ describe("makePinnedAgent", () => {
           (agent) => Effect.promise(() => agent.close()),
         );
 
-      assert.strictEqual(yield* fetchPinnedTo(served.certificate), "ok");
+      assert.strictEqual(yield* fetchPinnedTo(served.certificate), "1.1");
       const refused = yield* fetchPinnedTo(other.certificate).pipe(Effect.flip);
       assert.include(String((refused.cause as Error).cause), "different certificate");
     }).pipe(Effect.scoped),
