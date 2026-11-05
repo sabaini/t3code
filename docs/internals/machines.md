@@ -1,8 +1,19 @@
 # Machines
 
-Agents get disposable LXD virtual machines and containers, owned by a thread and reached over
+Agents get disposable LXD virtual machines and containers, owned by a project and reached over
 `ssh`. Everything an agent puts on a machine is untrusted, so the design is about what a machine
 can't reach, and how the agent still reaches it.
+
+## Why projects own machines
+
+Every agent runs as the server's OS user. Any of them can read any project's `ssh_config`, connect
+to its relay sockets, use the environment's one SSH key, and read the LXD client key from the
+secret store. Ownership by thread or project keeps nothing from an agent; it only decides which
+machines an agent sees by default and when they go away. What scope does enforce is the network:
+which machines can reach each other. Projects are where trust actually changes (a client's repo, an
+open-source one that runs strangers' code), and threads of one project share its code and secrets,
+so machines are kept apart per project and shared across its threads. The environment is the outer
+boundary: one LXD project and one certificate.
 
 ## The sandbox is the LXD project
 
@@ -13,24 +24,25 @@ project is missing or allows that it shouldn't, and placement refuses a host unt
 empty. A token that trusts the certificate for more than one project, or none, is refused when
 connecting.
 
-Each thread gets its own OVN network, so its machines reach each other and nothing of another
-thread's. One shared ACL allows the network's own machines and public IPv4 ranges and rejects the
+Each T3 project gets its own OVN network, so its machines reach each other and nothing of another
+project's. One shared ACL allows the network's own machines and public IPv4 ranges and rejects the
 rest, which covers the LAN, tailnets, cloud metadata, and the T3 Code host. OVN evaluates reject
 rules before allow rules, so the ACL can't list private ranges to reject: machines would lose each
 other too. It lists what's allowed, and the network's default rejects everything else. IPv6 is off
-because nothing filters it.
+because nothing filters it. A network lives on one LXD server, so all of a project's machines do
+too.
 
 A machine's own `eth0` replaces any its LXD profiles give it; a profile that adds a second NIC is
-refused, since that NIC wouldn't be on the thread's network.
+refused, since that NIC wouldn't be on the project's network.
 
 ## SSH goes through LXD, not the network
 
 The ACL also keeps the T3 Code host from reaching machines, and the host may not route to the OVN
 network anyway. So `ssh` never connects to a machine's address. Each machine gets a Unix socket in
-the thread's state directory; the thread's `ssh_config` points `ProxyCommand` at
+the project's state directory; the project's `ssh_config` points `ProxyCommand` at
 [`t3 machine-ssh-proxy`](../../apps/server/src/machines/sshProxy.ts), which joins that socket to
 an `nc` the server runs on the machine through LXD's exec API. Host keys are read through LXD's
-file API once cloud-init finishes, and pinned in the thread's `known_hosts`, so the first
+file API once cloud-init finishes, and pinned in the project's `known_hosts`, so the first
 connection never trusts an unknown key.
 
 The socket is why agent sandboxes matter. Codex's Linux sandbox blocks `connect()` on Unix sockets
@@ -40,12 +52,15 @@ of failing later.
 
 ## Leases, tags, and what is never deleted
 
-A lease in the server's database is the record that a thread owns a machine. Instances are also
-tagged with the environment, thread, and lease, so two environments can share an LXD project
-without touching each other's machines. An instance tagged with this environment but without a
-lease is listed in Settings for manual deletion and never deleted automatically: a development
-server started on a copy of real state has the same environment id, and would otherwise delete the
-real server's machines.
+A lease in the server's database is the record that a project owns a machine, and which thread's
+agent made it. Thread changes never touch leases; a sweep every five minutes releases those whose
+lifetime is up or whose project is gone. Instances are also tagged with the environment, project,
+and lease, so two environments can share an LXD project without touching each other's machines.
+
+An instance tagged with this environment but without a lease is listed in Settings for manual
+deletion and never deleted automatically: a development server started on a copy of real state has
+the same environment id, and would otherwise delete the real server's machines. For the same
+reason `migrate-dev-db` never copies leases.
 
 MCP tool calls wait at most 40 seconds for a machine to boot, because Codex gives an MCP call 60
 by default. Longer boots continue in the background and the agent calls `machine_wait`.

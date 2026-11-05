@@ -679,9 +679,9 @@ function UntrackedMachines({
   };
   return (
     <div className="space-y-1 border-t border-border/50 pt-2.5">
-      <p className="text-sm font-medium">Machines without a thread</p>
+      <p className="text-sm font-medium">Machines without a project</p>
       <p className="text-xs text-muted-foreground">
-        This environment created them but has lost track of their threads, for example after its
+        This environment created them but has lost track of their projects, for example after its
         data was reset. They're never deleted automatically.
       </p>
       {machines.map((machine) => (

@@ -25,7 +25,7 @@ const dependencies = [
 const MachineToolFailure = Schema.Union([MachineToolError, OrchestratorMcpFailure]);
 
 const MachineListTool = Tool.make("machine_list", {
-  description: "List this thread's test machines and the project's machine profiles.",
+  description: "List the project's test machines and machine profiles.",
   parameters: MachineToolListInput,
   success: MachineToolListResult,
   failure: MachineToolFailure,

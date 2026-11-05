@@ -13,7 +13,7 @@ export function MachinesButton(props: {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={props.count === 1 ? "View machine" : `View ${props.count} machines`}
-      accessibilityHint="Shows this thread's test machines"
+      accessibilityHint="Shows this project's test machines"
       onPress={props.onPress}
       className={
         compact

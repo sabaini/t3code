@@ -254,6 +254,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               {density === "full" && !props.draftId ? (
                 <ThreadMachinesPanel
                   environmentId={props.environmentId}
+                  projectId={props.projectId}
                   threadId={props.threadId}
                   onRunShellCommand={props.onRunShellCommand}
                 />

@@ -99,6 +99,10 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
         (environment_id, secret_name, label, urls_json, access, linked_at, expires_at)
         VALUES ('environment-box', 'peer-link-box', 'Box', '["https://box.example"]', 'auto',
           '2026-08-01', '2027-08-01')`;
+      yield* sql`CREATE TABLE machine_project_leases
+        (lease_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, project_id TEXT NOT NULL)`;
+      yield* sql`INSERT INTO machine_project_leases (lease_id, thread_id, project_id)
+        VALUES ('lease-1', 'stopped-thread', 'project-kept')`;
     }),
   );
   return databasePath;
@@ -135,6 +139,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             webhooks: number;
             transfers: number;
             links: number;
+            machines: number;
           }>`
             SELECT
               (SELECT COUNT(*) FROM auth_sessions) AS auth,
@@ -142,7 +147,8 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
               (SELECT COUNT(*) FROM scheduled_task_webhook_replay_keys) +
                 (SELECT COUNT(*) FROM scheduled_task_webhook_pending) AS webhooks,
               (SELECT COUNT(*) FROM orchestration_v2_projection_context_transfers) AS transfers,
-              (SELECT COUNT(*) FROM peer_environment_links) AS links`;
+              (SELECT COUNT(*) FROM peer_environment_links) AS links,
+              (SELECT COUNT(*) FROM machine_project_leases) AS machines`;
           return { threads, events, sessions, leftovers };
         }),
       );
@@ -164,6 +170,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         webhooks: 0,
         transfers: 0,
         links: 0,
+        machines: 0,
       });
     }),
   );

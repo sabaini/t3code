@@ -58,7 +58,7 @@ export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = deviceToolInstr
 /** Machine guidance for sessions holding the `machines` capability. */
 export const T3_CODE_MACHINE_TOOL_INSTRUCTIONS = `## T3 Code machines
 
-This project lets you create disposable LXD virtual machines and containers with root access, for work that shouldn't run on the user's machine: system packages, services, OS-level tests, clean-system repros, several hosts. Call \`machine_list\` for profiles, then \`machine_acquire\`, and run commands with the exact ssh command it returns. Release each machine with \`machine_release\` when done.`;
+This project lets you create disposable LXD virtual machines and containers with root access, for work that shouldn't run on the user's machine: system packages, services, OS-level tests, clean-system repros, several hosts. Call \`machine_list\` for the project's machines and profiles, reuse a machine that fits or create one with \`machine_acquire\`, and run commands with the exact ssh command it returns. Machines belong to the project, so other threads may be using them: release the ones you made with \`machine_release\` when done, and another thread's only when the user asks.`;
 
 /** MCP capabilities whose guidance only sessions holding them get. */
 export interface T3GatedTools {

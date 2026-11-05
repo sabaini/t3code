@@ -267,6 +267,10 @@ const McpToolUseWorld = Schema.StructWithRest(
     machineAgentAccess: Schema.optional(Schema.Boolean),
     /** The project's machine profiles. Defaults to a `vm` and a `container`. */
     machineProfiles: Schema.optional(Schema.Array(MachineProfile)),
+    /** Machines another thread of the project already made, which the agent may use. */
+    projectMachines: Schema.optional(
+      Schema.Array(Schema.Struct({ name: Schema.String, profile: Schema.String })),
+    ),
     /** Every capture reaches T3 with adb screencap's warning ahead of the PNG: T3 reports 0×0. */
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */

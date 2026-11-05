@@ -226,7 +226,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.deviceDetail]: "device",
   [WS_METHODS.deviceAction]: "device",
   [WS_METHODS.subscribeDeviceState]: "device",
-  [WS_METHODS.machinesSubscribeThread]: "machines",
+  [WS_METHODS.machinesSubscribeProject]: "machines",
   [WS_METHODS.machinesRelease]: "machines",
   [WS_METHODS.machinesInspectHosts]: "machines",
   [WS_METHODS.machinesConnectHost]: "machines",

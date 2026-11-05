@@ -10,8 +10,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import * as ProcessRunner from "../processRunner.ts";
 import type { LxdExec } from "./lxd/LxdClient.ts";
+import { MachinePlatform } from "./MachinePlatform.ts";
 
 export class MachineSshError extends Schema.TaggedError<MachineSshError>()("MachineSshError", {
   operation: Schema.String,
@@ -28,12 +28,12 @@ const MACHINE_SSH_USER = "ubuntu";
 
 /**
  * One key for the environment's machines. Agents all run as the same user as
- * the server, so keys per thread wouldn't keep threads from each other's machines.
+ * the server, so keys per project wouldn't keep projects from each other's machines.
  */
 export const ensureMachineSshKey = Effect.fn("MachineSsh.ensureKey")(function* (directory: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const runner = yield* ProcessRunner.ProcessRunner;
+  const platform = yield* MachinePlatform;
   const keyPath = path.join(directory, "id_ed25519");
   const failed = (operation: string) => (cause: unknown) =>
     new MachineSshError({ operation, cause });
@@ -46,11 +46,8 @@ export const ensureMachineSshKey = Effect.fn("MachineSsh.ensureKey")(function* (
       .pipe(Effect.mapError(failed("create the SSH key directory")));
     // A private key without its public half is from an interrupted run.
     yield* fs.remove(keyPath, { force: true }).pipe(Effect.mapError(failed("replace the SSH key")));
-    const result = yield* runner
-      .run({
-        command: "ssh-keygen",
-        args: ["-q", "-t", "ed25519", "-N", "", "-C", "t3-code-machines", "-f", keyPath],
-      })
+    const result = yield* platform
+      .run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "t3-code-machines", "-f", keyPath])
       .pipe(Effect.mapError(failed("create the SSH key")));
     if (result.code !== 0) {
       return yield* failed("create the SSH key")(new Error(result.stderr.slice(0, 500)));
@@ -106,7 +103,7 @@ export function machineSshConfig(input: {
     CheckHostIP no
 `,
   );
-  return `# This thread's machines. T3 Code rewrites this file as they come and go.\n${hosts.join("")}`;
+  return `# This project's machines. T3 Code rewrites this file as they come and go.\n${hosts.join("")}`;
 }
 
 /**

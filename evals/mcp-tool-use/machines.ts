@@ -29,6 +29,10 @@ export interface MachineWorld {
   readonly machineProfiles?: ReadonlyArray<MachineProfile> | undefined;
   /** true: the project turned on agent machine access, so the session holds `machines`. */
   readonly machineAgentAccess?: boolean | undefined;
+  /** Machines another thread of the project already made, by name and profile. */
+  readonly projectMachines?:
+    | ReadonlyArray<{ readonly name: string; readonly profile: string }>
+    | undefined;
 }
 
 const DEFAULT_PROFILES: ReadonlyArray<MachineProfile> = [
@@ -55,6 +59,7 @@ const DEFAULT_PROFILES: ReadonlyArray<MachineProfile> = [
 ];
 
 const THREAD = ThreadId.make("mcp-tool-use-eval");
+const OTHER_THREAD = ThreadId.make("mcp-tool-use-eval-other");
 const SSH_CONFIG = "/home/user/.t3/userdata/machines/mcp-tool-use-eval/ssh_config";
 const EXPIRES_AT = "2026-01-02T12:00:00.000Z";
 
@@ -66,6 +71,30 @@ export const makeMachineTools = Effect.fn("evaluateMcpToolUse.makeMachineTools")
   const profiles = world.machineProfiles ?? DEFAULT_PROFILES;
   const machines = new Map<string, MachineView>();
   let created = 0;
+  const view = (name: string, profile: MachineProfile, threadId: ThreadId): MachineView => {
+    created++;
+    return {
+      name,
+      profile: profile.name,
+      type: profile.type,
+      image: profile.image,
+      cpus: profile.cpus,
+      memoryGiB: profile.memoryGiB,
+      diskSizesGiB: profile.diskSizesGiB,
+      state: "ready",
+      hostLabel: "lab",
+      dnsName: `${name}-3f9a2c1b.lxd`,
+      addresses: [`10.84.0.${created + 1}`],
+      expiresAt: EXPIRES_AT,
+      sshCommand: `ssh -F ${SSH_CONFIG} ${name}`,
+      threadId,
+    };
+  };
+  for (const existing of world.projectMachines ?? []) {
+    const profile = profiles.find((candidate) => candidate.name === existing.profile);
+    if (profile === undefined) return yield* Effect.die(`No profile ${existing.profile}`);
+    machines.set(existing.name, view(existing.name, profile, OTHER_THREAD));
+  }
   const refused = (
     reason: MachineService.MachineRefusedError["reason"],
     subject?: string,
@@ -97,7 +126,7 @@ export const makeMachineTools = Effect.fn("evaluateMcpToolUse.makeMachineTools")
           profiles.map((candidate) => candidate.name),
         );
       }
-      if (machines.size >= MachineService.MAX_MACHINES_PER_THREAD) {
+      if (machines.size >= MachineService.MAX_MACHINES_PER_PROJECT) {
         return yield* refused("limit");
       }
       let name = request.name;
@@ -108,22 +137,7 @@ export const makeMachineTools = Effect.fn("evaluateMcpToolUse.makeMachineTools")
       } else if (machines.has(name)) {
         return yield* refused("name-taken", name);
       }
-      created++;
-      const machine: MachineView = {
-        name,
-        profile: profile.name,
-        type: profile.type,
-        image: profile.image,
-        cpus: profile.cpus,
-        memoryGiB: profile.memoryGiB,
-        diskSizesGiB: profile.diskSizesGiB,
-        state: "ready",
-        hostLabel: "lab",
-        dnsName: `${name}-3f9a2c1b.lxd`,
-        addresses: [`10.84.0.${created + 1}`],
-        expiresAt: EXPIRES_AT,
-        sshCommand: `ssh -F ${SSH_CONFIG} ${name}`,
-      };
+      const machine = view(name, profile, request.threadId);
       machines.set(name, machine);
       return machine;
     }),
@@ -220,7 +234,7 @@ export const makeMachineTools = Effect.fn("evaluateMcpToolUse.makeMachineTools")
     machines.size === 0
       ? []
       : [
-          `T3 machines this thread holds, all running Ubuntu with passwordless sudo for ubuntu: ${[
+          `T3 machines this project holds, all running Ubuntu with passwordless sudo for ubuntu: ${[
             ...machines.values(),
           ]
             .map((machine) => `${machine.name} (${machine.type}, ${machine.addresses[0]})`)

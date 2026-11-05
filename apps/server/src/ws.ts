@@ -3282,8 +3282,8 @@ export const layerWsRpc = (
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
         [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
         [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
-        [WS_METHODS.machinesSubscribeThread]: (input) =>
-          machineService.subscribeThread(input.threadId).pipe(
+        [WS_METHODS.machinesSubscribeProject]: (input) =>
+          machineService.subscribeProject(input.projectId).pipe(
             Stream.map((machines) => ({ machines })),
             Stream.mapError(machineRpcError),
           ),

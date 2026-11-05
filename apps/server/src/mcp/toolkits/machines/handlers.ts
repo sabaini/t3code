@@ -3,6 +3,7 @@ import {
   type MachineView,
   type ProviderDriverKind,
   type RuntimeMode,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
@@ -36,8 +37,17 @@ function machineSandboxNotice(
   return undefined;
 }
 
-function machineNext(machine: MachineView, sshConfig: string, notice: string | undefined): string {
+function machineNext(
+  machine: MachineView,
+  caller: ThreadId,
+  sshConfig: string,
+  notice: string | undefined,
+): string {
   const { name } = machine;
+  const release =
+    machine.threadId === caller
+      ? "release it with machine_release once you're done, unless the user wants to keep it."
+      : "another thread made it and may still use it, so release it only if the user asks.";
   const lines = ((): ReadonlyArray<string> => {
     switch (machine.state) {
       case "ready":
@@ -45,8 +55,8 @@ function machineNext(machine: MachineView, sshConfig: string, notice: string | u
           `Run commands on ${name} with: ${machine.sshCommand} '<command>'`,
           `Use this exact -F config: it routes ssh through T3 Code and pins the machine's host key. Copy files with scp -F ${sshConfig}, or rsync -e 'ssh -F ${sshConfig}'.`,
           "You log in as ubuntu, with passwordless sudo.",
-          `The thread's other machines reach it as ${machine.dnsName}. It can reach the internet, but not the user's network.`,
-          `It stops while this thread is idle, and ssh starts it again. It's deleted at ${machine.expiresAt}; release it with machine_release once you're done.`,
+          `The project's other machines reach it as ${machine.dnsName}. It can reach the internet, but not the user's network.`,
+          `It belongs to the project, so other threads can use it too. It stops after 4 hours without use, and ssh starts it again. It's deleted at ${machine.expiresAt}; ${release}`,
         ];
       case "creating":
       case "starting":
@@ -85,34 +95,46 @@ const requireMachineAccess = McpInvocationContext.requireThreadMcpCapability("ma
   ),
 );
 
-const sandboxNotice = Effect.fn("MachineTools.sandboxNotice")(function* (
+/** Machines belong to the calling thread's project. */
+const callerOf = Effect.fn("MachineTools.callerOf")(function* (
   thread: McpInvocationContext.McpThreadCaller,
 ) {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const registry = yield* ProviderRegistry.ProviderRegistry;
   const shell = yield* threads
     .getThreadShell(thread.threadId)
-    .pipe(Effect.orElseSucceed(() => null));
-  if (shell === null) return undefined;
+    .pipe(Effect.mapError((error) => new MachineToolError({ reason: error.message })));
+  if (shell === null) {
+    return yield* new MachineToolError({ reason: "This thread no longer exists." });
+  }
   const providers = yield* registry.getProviders;
   const driver = providers.find(
     (provider) => provider.instanceId === thread.providerInstanceId,
   )?.driver;
-  return machineSandboxNotice(driver, shell.runtimeMode);
+  return {
+    threadId: thread.threadId,
+    projectId: shell.projectId,
+    notice: machineSandboxNotice(driver, shell.runtimeMode),
+  };
 });
+type Caller = Effect.Success<ReturnType<typeof callerOf>>;
 
 const toolError = (error: MachineService.MachineError | MachineToolError) =>
   error._tag === "MachineToolError" ? error : new MachineToolError({ reason: error.message });
 
 const machineResult = Effect.fn("MachineTools.machineResult")(function* (
-  thread: McpInvocationContext.McpThreadCaller,
+  caller: Caller,
   machine: MachineView,
 ) {
   const machines = yield* MachineService.MachineService;
-  const notice = yield* sandboxNotice(thread);
   return {
     machine,
-    next: machineNext(machine, machines.sshConfigPath(thread.threadId), notice),
+    next: machineNext(
+      machine,
+      caller.threadId,
+      machines.sshConfigPath(caller.projectId),
+      caller.notice,
+    ),
   };
 });
 
@@ -120,48 +142,53 @@ const handlers = {
   machine_list: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const { thread } = yield* requireMachineAccess;
+      const caller = yield* callerOf(thread);
       const machines = yield* MachineService.MachineService;
-      const all = yield* machines.list(thread.threadId);
-      const notice = yield* sandboxNotice(thread);
+      const all = yield* machines.list(caller.projectId);
       return {
         machines:
           input.name === undefined ? all : all.filter((machine) => machine.name === input.name),
-        profiles: yield* machines.profiles(thread.threadId),
-        sshConfig: machines.sshConfigPath(thread.threadId),
-        ...(notice === undefined ? {} : { notice }),
+        profiles: yield* machines.profiles(caller.projectId),
+        sshConfig: machines.sshConfigPath(caller.projectId),
+        threadId: caller.threadId,
+        ...(caller.notice === undefined ? {} : { notice: caller.notice }),
       };
     }).pipe(Effect.mapError(toolError)),
   ),
   machine_acquire: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const { thread } = yield* requireMachineAccess;
+      const caller = yield* callerOf(thread);
       const machines = yield* MachineService.MachineService;
       const machine = yield* machines.acquire({
-        threadId: thread.threadId,
+        projectId: caller.projectId,
+        threadId: caller.threadId,
         profile: input.profile,
         name: input.name,
         waitFor: TOOL_WAIT,
       });
-      return yield* machineResult(thread, machine);
+      return yield* machineResult(caller, machine);
     }).pipe(Effect.mapError(toolError)),
   ),
   machine_wait: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const { thread } = yield* requireMachineAccess;
+      const caller = yield* callerOf(thread);
       const machines = yield* MachineService.MachineService;
       const machine = yield* machines.wait({
-        threadId: thread.threadId,
+        projectId: caller.projectId,
         name: input.name,
         waitFor: TOOL_WAIT,
       });
-      return yield* machineResult(thread, machine);
+      return yield* machineResult(caller, machine);
     }).pipe(Effect.mapError(toolError)),
   ),
   machine_release: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const { thread } = yield* requireMachineAccess;
+      const caller = yield* callerOf(thread);
       const machines = yield* MachineService.MachineService;
-      yield* machines.release({ threadId: thread.threadId, name: input.name });
+      yield* machines.release({ projectId: caller.projectId, name: input.name });
       return {};
     }).pipe(Effect.mapError(toolError)),
   ),

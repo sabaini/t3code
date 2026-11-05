@@ -144,7 +144,7 @@ export function machineHostsAttention(inspection: MachineHostsInspection): strin
     ...(failing === 0 ? [] : [failing === 1 ? "Needs attention" : `${failing} need attention`]),
     ...(untracked === 0
       ? []
-      : [`${untracked} ${untracked === 1 ? "machine" : "machines"} without a thread`]),
+      : [`${untracked} ${untracked === 1 ? "machine" : "machines"} without a project`]),
   ];
   return notes.length === 0 ? null : notes.join(" · ");
 }

@@ -45,8 +45,12 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
-const SSH_CONFIG = "/state/machines/t/abc/ssh_config";
-const machine = (name: string, state: MachineView["state"]): MachineView => ({
+const SSH_CONFIG = "/state/machines/p/abc/ssh_config";
+const machine = (
+  name: string,
+  state: MachineView["state"],
+  owner: ThreadId = threadId,
+): MachineView => ({
   name,
   profile: "vm",
   type: "virtual-machine",
@@ -60,6 +64,7 @@ const machine = (name: string, state: MachineView["state"]): MachineView => ({
   addresses: state === "ready" ? ["10.1.1.2"] : [],
   expiresAt: "2026-10-26T12:00:00.000Z",
   sshCommand: `ssh -F ${SSH_CONFIG} ${name}`,
+  threadId: owner,
 });
 
 const provider = (driver: string): ServerProvider => ({
@@ -97,10 +102,16 @@ function harness(input: {
           acquire:
             input.acquire ??
             ((request) => Effect.succeed(machine(request.name ?? `${request.profile}-1`, "ready"))),
-          wait: (request) => Effect.succeed(machine(request.name, "starting")),
+          wait: (request) =>
+            Effect.succeed(
+              request.name === "db"
+                ? machine("db", "ready", ThreadId.make("thread-other"))
+                : machine(request.name, "starting"),
+            ),
           list: () => Effect.succeed([machine("vm-1", "ready"), machine("db", "stopped")]),
           profiles: () => Effect.succeed([]),
-          release: (request) => Effect.sync(() => void released.push(request.name)),
+          release: (request) =>
+            Effect.sync(() => void released.push(`${request.projectId}/${request.name}`)),
           sshConfigPath: () => SSH_CONFIG,
         }),
       ),
@@ -164,11 +175,20 @@ it.effect("tells the agent how to reach a machine and what to do while it boots"
     expect(listed.structuredContent).toMatchObject({
       machines: [{ name: "db", state: "stopped" }],
       sshConfig: SSH_CONFIG,
+      threadId,
     });
     expect(listed.structuredContent).not.toHaveProperty("notice");
 
+    // Another thread's machine: the agent may use it, and releases it only when asked.
+    const shared = yield* call("machine_wait", { name: "db" });
+    expect((shared.structuredContent as { next: string }).next).toContain(
+      "release it only if the user asks",
+    );
+    expect(ready.next).toContain("unless the user wants to keep it");
+
+    // Machines are the thread's project's, so any of its threads may release one.
     expect((yield* call("machine_release", { name: "db" })).isError).toBe(false);
-    expect(released).toEqual(["db"]);
+    expect(released).toEqual(["project:mcp-test/db"]);
   }).pipe(Effect.scoped, Effect.provide(layer));
 });
 

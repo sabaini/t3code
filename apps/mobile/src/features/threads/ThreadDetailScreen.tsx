@@ -139,7 +139,7 @@ import {
 } from "../../lib/layout";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { deviceEnvironment } from "../../state/device";
-import { useThreadMachines } from "../../state/machines";
+import { useProjectMachines } from "../../state/machines";
 import { useEnvironmentQuery } from "../../state/query";
 import { threadDevicePreviews } from "../devices/threadDevicePreviews";
 import { ThreadBrowserFloat } from "../browser/ThreadBrowserFloat";
@@ -420,7 +420,7 @@ function ThreadDetailBody(
     deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
   );
   const devicePreviews = threadDevicePreviews(deviceState.data, props.selectedThread.id);
-  const machines = useThreadMachines(props.environmentId, props.selectedThread.id);
+  const machines = useProjectMachines(props.environmentId, props.selectedThread.projectId);
   const openDevicePreview = () => {
     Keyboard.dismiss();
     if (
@@ -1624,7 +1624,7 @@ function ThreadDetailBody(
                               Keyboard.dismiss();
                               navigation.navigate("ThreadMachines", {
                                 environmentId: props.environmentId,
-                                threadId: props.selectedThread.id,
+                                projectId: props.selectedThread.projectId,
                               });
                             },
                           }

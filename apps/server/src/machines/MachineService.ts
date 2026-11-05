@@ -9,13 +9,13 @@ import {
   type MachineProfile,
   type MachineState,
   type MachineView,
+  ProjectId,
   ServerSettingsError,
-  ThreadId,
+  type ThreadId,
   type UntrackedMachine,
   type UntrackedMachineInput,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -37,14 +37,10 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import * as ServerConfig from "../config.ts";
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as ProcessRunner from "../processRunner.ts";
-import { forkParked } from "../serverActivation.ts";
-import * as Settings from "../serverSettings.ts";
 import type { LxdClient, LxdError, LxdNetworkAcl, LxdNetworkAclPut } from "./lxd/LxdClient.ts";
 import * as MachineHosts from "./MachineHosts.ts";
 import * as MachineLeaseStore from "./MachineLeaseStore.ts";
+import { MachinePlatform, type MachinePlatformError } from "./MachinePlatform.ts";
 import {
   lxdVersionSupported,
   MACHINE_DNS_DOMAIN,
@@ -54,9 +50,9 @@ import {
   machineInstanceName,
   machineInstanceTags,
   machineNetworkAclRules,
+  PROJECT_NETWORK_SECURITY,
+  projectNetworkName,
   projectSandbox,
-  THREAD_NETWORK_SECURITY,
-  threadNetworkName,
 } from "./MachineSandbox.ts";
 import {
   ensureMachineSshKey,
@@ -67,9 +63,8 @@ import {
   serveRelaySocket,
   writeMachineSshProxy,
 } from "./MachineSsh.ts";
-import * as MachineThreads from "./MachineThreads.ts";
 
-export const MAX_MACHINES_PER_THREAD = 5;
+export const MAX_MACHINES_PER_PROJECT = 5;
 const BOOT_TIMEOUT = Duration.minutes(10);
 const BOOT_POLL_INTERVAL = Duration.seconds(3);
 /** A VM's files come through its LXD agent, which may hang while the VM boots. */
@@ -95,7 +90,6 @@ export class MachineRefusedError extends Schema.TaggedError<MachineRefusedError>
   "MachineRefusedError",
   {
     reason: Schema.Literals([
-      "thread-closed",
       "not-found",
       "no-hosts",
       "no-profiles",
@@ -124,10 +118,8 @@ export class MachineRefusedError extends Schema.TaggedError<MachineRefusedError>
   override get message(): string {
     const subject = this.subject ?? "";
     switch (this.reason) {
-      case "thread-closed":
-        return "This thread is archived or deleted, so it can't have new machines.";
       case "not-found":
-        return `This thread has no machine called ${subject}.`;
+        return `This project has no machine called ${subject}.`;
       case "no-hosts":
         return "No LXD server is connected, so there are no machines. Ask the user to connect one in Settings → Devices → Machines.";
       case "no-profiles":
@@ -135,9 +127,9 @@ export class MachineRefusedError extends Schema.TaggedError<MachineRefusedError>
       case "unknown-profile":
         return `There's no machine profile called ${subject}. This project has ${(this.options ?? []).join(", ")}.`;
       case "limit":
-        return `This thread already has ${MAX_MACHINES_PER_THREAD} machines. Release one first.`;
+        return `This project already has ${MAX_MACHINES_PER_PROJECT} machines. Release one first.`;
       case "name-taken":
-        return `This thread already has a machine called ${subject}.`;
+        return `This project already has a machine called ${subject}.`;
       case "host-disconnected":
         return `${subject} is on an LXD server that isn't connected now. It can be used or released once the user connects it again in Settings → Devices → Machines.`;
       case "unsupported-version":
@@ -151,7 +143,7 @@ export class MachineRefusedError extends Schema.TaggedError<MachineRefusedError>
       case "missing-lxd-profile":
         return `The LXD server has no profile called ${subject}.`;
       case "extra-nic":
-        return `The LXD profile ${subject} gives machines another network device, which could connect them to more than their thread's other machines.`;
+        return `The LXD profile ${subject} gives machines another network device, which could connect them to more than their project's other machines.`;
       case "no-root-disk":
         return "None of the profile's LXD profiles gives machines a root disk, so there's no storage pool for their extra disks.";
       case "no-usable-host":
@@ -173,7 +165,7 @@ export class MachineRefusedError extends Schema.TaggedError<MachineRefusedError>
 export type MachineError =
   | MachineRefusedError
   | MachineLeaseStore.MachineLeaseStoreError
-  | MachineThreads.MachineThreadReadError
+  | MachinePlatformError
   | MachineSshError
   | LxdError
   | ServerSettingsError;
@@ -185,32 +177,37 @@ type DeviceMap = Record<string, Readonly<Record<string, string>>>;
 export class MachineService extends Context.Service<
   MachineService,
   {
-    /** Creates a machine from one of the project's profiles, waiting up to `waitFor` for it to boot. */
+    /**
+     * Creates a machine from one of the project's profiles for `threadId`'s agent,
+     * waiting up to `waitFor` for it to boot.
+     */
     readonly acquire: (input: {
+      readonly projectId: ProjectId;
       readonly threadId: ThreadId;
       readonly profile: string;
       readonly name?: string | undefined;
       readonly waitFor?: Duration.Input | undefined;
     }) => Effect.Effect<MachineView, MachineError>;
-    readonly list: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<MachineView>, MachineError>;
-    /** The profiles the thread's project offers. */
+    readonly list: (
+      projectId: ProjectId,
+    ) => Effect.Effect<ReadonlyArray<MachineView>, MachineError>;
     readonly profiles: (
-      threadId: ThreadId,
+      projectId: ProjectId,
     ) => Effect.Effect<ReadonlyArray<MachineProfile>, MachineError>;
     /** Starts the machine if it's stopped, and waits up to `waitFor` for it to boot. */
     readonly wait: (input: {
-      readonly threadId: ThreadId;
+      readonly projectId: ProjectId;
       readonly name: string;
       readonly waitFor?: Duration.Input | undefined;
     }) => Effect.Effect<MachineView, MachineError>;
     /** Deletes the machine and its disks; work still going on for it stops first. */
     readonly release: (input: {
-      readonly threadId: ThreadId;
+      readonly projectId: ProjectId;
       readonly name: string;
     }) => Effect.Effect<void, MachineError>;
-    /** The thread's machines, then again after each change T3 Code makes to them. */
-    readonly subscribeThread: (
-      threadId: ThreadId,
+    /** The project's machines, then again after each change T3 Code makes to them. */
+    readonly subscribeProject: (
+      projectId: ProjectId,
     ) => Stream.Stream<ReadonlyArray<MachineView>, MachineError>;
     /** Each LXD server's status, and the machines this environment made there that it no longer knows. */
     readonly inspectHosts: Effect.Effect<
@@ -223,11 +220,14 @@ export class MachineService extends Context.Service<
     /** Deletes a machine `inspectHosts` lists as untracked, with its disks. */
     readonly deleteUntracked: (input: UntrackedMachineInput) => Effect.Effect<void, MachineError>;
     /** Known before any machine exists, so agents can be told up front. */
-    readonly sshConfigPath: (threadId: ThreadId) => string;
-    /** Releases the thread's machines once it's archived or deleted, and stops them once it settles. */
-    readonly reconcileThread: (threadId: ThreadId) => Effect.Effect<void, MachineError>;
-    /** Expiry, idle stops, and work a restart or a disconnected host left unfinished. */
+    readonly sshConfigPath: (projectId: ProjectId) => string;
+    /** Expiry, idle stops, deleted projects, and work a restart or a disconnected host left unfinished. */
     readonly sweep: Effect.Effect<void>;
+    /**
+     * Restores relay sockets, then sweeps every few minutes and follows LXD
+     * server changes until interrupted. The application forks it once it serves.
+     */
+    readonly run: Effect.Effect<void>;
   }
 >()("t3/machines/MachineService") {}
 
@@ -266,46 +266,43 @@ const sameAclRules = (current: LxdNetworkAcl, wanted: LxdNetworkAclPut) => {
 };
 
 const make = Effect.gen(function* () {
-  const settings = yield* Settings.ServerSettingsService;
+  const platform = yield* MachinePlatform;
   const hosts = yield* MachineHosts.MachineHosts;
   const store = yield* MachineLeaseStore.MachineLeaseStore;
-  const threads = yield* MachineThreads.MachineThreads;
-  const environment = yield* ServerEnvironment.ServerEnvironment;
-  const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const processContext = yield* Effect.context<
-    ProcessRunner.ProcessRunner | FileSystem.FileSystem | Path.Path
+    MachinePlatform | FileSystem.FileSystem | Path.Path
   >();
   const layerScope = yield* Effect.scope;
 
-  const threadLock = yield* KeyedLock.make<ThreadId>();
+  const projectLock = yield* KeyedLock.make<ProjectId>();
   const aclLock = yield* KeyedLock.make<string>();
-  const sshLock = yield* KeyedLock.make<ThreadId>();
+  const sshLock = yield* KeyedLock.make<ProjectId>();
   const sweepLock = yield* Semaphore.make(1);
   const keyLock = yield* Semaphore.make(1);
   /** Creating or booting a machine, by lease id. */
   const tasks = yield* FiberMap.make<string, void, never>();
-  /** Relay sockets by thread, then machine name. */
-  const relays = new Map<ThreadId, Map<string, Scope.Closeable>>();
+  /** Relay sockets by project, then machine name. */
+  const relays = new Map<ProjectId, Map<string, Scope.Closeable>>();
   /** Open SSH connections by lease id; a machine in use isn't stopped for being idle. */
   const openConnections = new Map<string, number>();
-  /** Threads whose machines changed. */
-  const changed = yield* PubSub.unbounded<ThreadId>();
-  const notify = (threadId: ThreadId) => PubSub.publish(changed, threadId);
+  /** Projects whose machines changed. */
+  const changed = yield* PubSub.unbounded<ProjectId>();
+  const notify = (projectId: ProjectId) => PubSub.publish(changed, projectId);
 
-  const machinesDir = path.join(config.stateDir, "machines");
+  const machinesDir = path.join(platform.stateDir, "machines");
   const keyDir = path.join(machinesDir, "ssh");
   const proxyPath = path.join(keyDir, "proxy");
   // Deep state directories, like a worktree's, would make relay socket paths too long.
-  const threadsDir =
-    path.join(machinesDir, "t").length + 1 + 12 + 1 + 17 <= MAX_SOCKET_PATH
-      ? path.join(machinesDir, "t")
-      : path.join(NodeOS.tmpdir(), `t3m-${sha(config.stateDir, 8)}`);
-  const threadDir = (threadId: ThreadId) => path.join(threadsDir, sha(threadId, 12));
-  const sshConfigPath = (threadId: ThreadId) => path.join(threadDir(threadId), "ssh_config");
-  const socketPath = (threadId: ThreadId, name: string) =>
-    path.join(threadDir(threadId), `${sha(name, 12)}.sock`);
+  const projectsDir =
+    path.join(machinesDir, "p").length + 1 + 12 + 1 + 17 <= MAX_SOCKET_PATH
+      ? path.join(machinesDir, "p")
+      : path.join(NodeOS.tmpdir(), `t3m-${sha(platform.stateDir, 8)}`);
+  const projectDir = (projectId: ProjectId) => path.join(projectsDir, sha(projectId, 12));
+  const sshConfigPath = (projectId: ProjectId) => path.join(projectDir(projectId), "ssh_config");
+  const socketPath = (projectId: ProjectId, name: string) =>
+    path.join(projectDir(projectId), `${sha(name, 12)}.sock`);
 
   let sshKey: { readonly keyPath: string; readonly publicKey: string } | undefined;
   const ensureSshKey = Effect.gen(function* () {
@@ -318,13 +315,13 @@ const make = Effect.gen(function* () {
 
   const now = Clock.currentTimeMillis;
 
-  const leasesOf = (threadId: ThreadId) => store.listForThread(threadId);
+  const leasesOf = (projectId: ProjectId) => store.listForProject(projectId);
 
   const findLease = Effect.fn("MachineService.findLease")(function* (
-    threadId: ThreadId,
+    projectId: ProjectId,
     name: string,
   ) {
-    const lease = (yield* leasesOf(threadId)).find((candidate) => candidate.name === name);
+    const lease = (yield* leasesOf(projectId)).find((candidate) => candidate.name === name);
     if (!lease) return yield* refused("not-found", name);
     return lease;
   });
@@ -334,16 +331,16 @@ const make = Effect.gen(function* () {
     lease: MachineLease,
     change: (current: MachineLease) => MachineLease,
   ) {
-    return yield* threadLock.withLock(
-      lease.threadId,
+    return yield* projectLock.withLock(
+      lease.projectId,
       Effect.gen(function* () {
-        const current = (yield* leasesOf(lease.threadId)).find(
+        const current = (yield* leasesOf(lease.projectId)).find(
           (candidate) => candidate.leaseId === lease.leaseId,
         );
         if (!current) return Option.none<MachineLease>();
         const next = change(current);
         yield* store.save(next);
-        yield* notify(lease.threadId);
+        yield* notify(lease.projectId);
         return Option.some(next);
       }),
     );
@@ -360,29 +357,31 @@ const make = Effect.gen(function* () {
     return host;
   });
 
-  const syncThreadSsh = Effect.fn("MachineService.syncThreadSsh")(function* (threadId: ThreadId) {
+  const syncProjectSsh = Effect.fn("MachineService.syncProjectSsh")(function* (
+    projectId: ProjectId,
+  ) {
     yield* sshLock.withLock(
-      threadId,
+      projectId,
       Effect.gen(function* () {
-        const leases = yield* leasesOf(threadId);
+        const leases = yield* leasesOf(projectId);
         const reachable = leases.filter(
           (lease) => lease.hostKeys.length > 0 && lease.status !== "releasing",
         );
-        const current = relays.get(threadId) ?? new Map<string, Scope.Closeable>();
-        relays.set(threadId, current);
+        const current = relays.get(projectId) ?? new Map<string, Scope.Closeable>();
+        relays.set(projectId, current);
         for (const [name, scope] of current) {
           if (reachable.some((lease) => lease.name === name)) continue;
           current.delete(name);
           yield* Scope.close(scope, Exit.void);
         }
-        const directory = threadDir(threadId);
+        const directory = projectDir(projectId);
         if (leases.length === 0) {
-          relays.delete(threadId);
+          relays.delete(projectId);
           yield* fs.remove(directory, { recursive: true, force: true }).pipe(Effect.ignore);
           return;
         }
         const failed = (cause: unknown) =>
-          new MachineSshError({ operation: "write a thread's SSH files", cause });
+          new MachineSshError({ operation: "write a project's SSH files", cause });
         yield* fs
           .makeDirectory(directory, { recursive: true, mode: 0o700 })
           .pipe(Effect.mapError(failed));
@@ -390,8 +389,8 @@ const make = Effect.gen(function* () {
           if (current.has(lease.name)) continue;
           const scope = yield* Scope.fork(layerScope);
           const exit = yield* serveRelaySocket(
-            socketPath(threadId, lease.name),
-            relayConnection(threadId, lease.name),
+            socketPath(projectId, lease.name),
+            relayConnection(projectId, lease.name),
           ).pipe(Scope.provide(scope), Effect.provideContext(processContext), Effect.exit);
           if (Exit.isFailure(exit)) {
             yield* Scope.close(scope, Exit.void);
@@ -412,11 +411,11 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(failed));
         yield* fs
           .writeFileString(
-            sshConfigPath(threadId),
+            sshConfigPath(projectId),
             machineSshConfig({
               machines: reachable.map((lease) => ({
                 name: lease.name,
-                socketPath: socketPath(threadId, lease.name),
+                socketPath: socketPath(projectId, lease.name),
               })),
               keyPath: key.keyPath,
               knownHostsPath,
@@ -447,7 +446,7 @@ const make = Effect.gen(function* () {
     return devices;
   });
 
-  /** Refuses a host that can't run `profile`, or keep it sandboxed. Returns the uplink for thread networks. */
+  /** Refuses a host that can't run `profile`, or keep it sandboxed. Returns the uplink for project networks. */
   const checkHost = Effect.fn("MachineService.checkHost")(function* (
     entry: ConnectedHost,
     profile: MachineProfile,
@@ -465,7 +464,7 @@ const make = Effect.gen(function* () {
     if (!sandbox.uplink || sandbox.missing.length > 0 || sandbox.unsafe.length > 0) {
       return yield* refused("unsandboxed", entry.host.project);
     }
-    // The machine's own eth0 replaces any its profiles have, but another NIC would get past the thread's network.
+    // The machine's own eth0 replaces any its profiles have, but another NIC would get past the project's network.
     const devices = yield* profileDevices(entry.lxd, profile.lxdProfiles);
     for (const [name, { profile: lxdProfile, device }] of devices) {
       if (name !== "eth0" && device.type === "nic") {
@@ -476,7 +475,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A thread's machines reach each other on its network, which is on one host,
+   * A project's machines reach each other on its network, which is on one host,
    * so they all go where its first one did. That one goes to the host with the
    * fewest instances among those that can take it.
    */
@@ -524,44 +523,44 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const ensureThreadNetwork = Effect.fn("MachineService.ensureThreadNetwork")(function* (
+  const ensureProjectNetwork = Effect.fn("MachineService.ensureProjectNetwork")(function* (
     entry: ConnectedHost,
-    threadId: ThreadId,
+    projectId: ProjectId,
     uplink: string,
   ) {
-    const name = threadNetworkName(threadId);
+    const name = projectNetworkName(projectId);
     const existing = yield* entry.lxd.network(name);
     if (Option.isNone(existing)) {
       yield* entry.lxd.createNetwork({
         name,
-        description: `T3 Code machines of thread ${threadId}`,
-        config: { network: uplink, ...THREAD_NETWORK_SECURITY },
+        description: `T3 Code machines of project ${projectId}`,
+        config: { network: uplink, ...PROJECT_NETWORK_SECURITY },
       });
     } else if (
-      Object.entries(THREAD_NETWORK_SECURITY).some(
+      Object.entries(PROJECT_NETWORK_SECURITY).some(
         ([key, value]) => existing.value.config[key] !== value,
       )
     ) {
-      yield* entry.lxd.updateNetwork(name, THREAD_NETWORK_SECURITY);
+      yield* entry.lxd.updateNetwork(name, PROJECT_NETWORK_SECURITY);
     }
   });
 
   /**
-   * Idle threads hold no uplink address. Machines T3 Code lost track of may still use it.
-   * Holds the thread's lock, so a machine acquired meanwhile keeps the network it was given.
+   * Projects without machines hold no uplink address. Machines T3 Code lost track of may still use it.
+   * Holds the project's lock, so a machine acquired meanwhile keeps the network it was given.
    */
   const removeUnusedNetwork = Effect.fn("MachineService.removeUnusedNetwork")(function* (
     entry: ConnectedHost,
-    threadId: ThreadId,
+    projectId: ProjectId,
   ) {
-    yield* threadLock.withLock(
-      threadId,
+    yield* projectLock.withLock(
+      projectId,
       Effect.gen(function* () {
-        const remaining = yield* leasesOf(threadId);
+        const remaining = yield* leasesOf(projectId);
         if (remaining.some((lease) => lease.hostId === entry.host.id)) return;
-        const network = yield* entry.lxd.network(threadNetworkName(threadId));
+        const network = yield* entry.lxd.network(projectNetworkName(projectId));
         if (Option.isSome(network) && network.value.usedBy.length === 0) {
-          yield* entry.lxd.deleteNetwork(threadNetworkName(threadId));
+          yield* entry.lxd.deleteNetwork(projectNetworkName(projectId));
         }
       }),
     );
@@ -637,7 +636,7 @@ const make = Effect.gen(function* () {
       error: null,
       hostKeys: keys,
     }));
-    yield* syncThreadSsh(lease.threadId);
+    yield* syncProjectSsh(lease.projectId);
   });
 
   const provision = Effect.fn("MachineService.provision")(function* (
@@ -674,16 +673,16 @@ const make = Effect.gen(function* () {
       }
     }
     const key = yield* ensureSshKey;
-    const environmentId = yield* environment.getEnvironmentId;
+    const environmentId = yield* platform.environmentId;
     yield* lxd.createInstance({
       name: lease.instance,
-      description: `T3 Code machine ${lease.name} of thread ${lease.threadId}`,
+      description: `T3 Code machine ${lease.name} of project ${lease.projectId}`,
       type: lease.profile.type,
       source: machineImageSource(lease.profile.image),
       profiles: lease.profile.lxdProfiles,
       config: machineInstanceConfig({
         environmentId,
-        threadId: lease.threadId,
+        projectId: lease.projectId,
         leaseId: lease.leaseId,
         name: lease.name,
         profile: lease.profile,
@@ -753,15 +752,16 @@ const make = Effect.gen(function* () {
     dnsName: `${lease.instance}.${MACHINE_DNS_DOMAIN}`,
     addresses,
     expiresAt: DateTime.formatIso(DateTime.makeUnsafe(lease.expiresAt)),
-    sshCommand: `ssh -F ${sshConfigPath(lease.threadId)} ${lease.name}`,
+    sshCommand: `ssh -F ${sshConfigPath(lease.projectId)} ${lease.name}`,
+    threadId: lease.threadId,
     ...(lease.error === null ? {} : { error: lease.error }),
   });
 
-  const list = Effect.fn("MachineService.list")(function* (threadId: ThreadId) {
-    const leases = yield* leasesOf(threadId);
+  const list = Effect.fn("MachineService.list")(function* (projectId: ProjectId) {
+    const leases = yield* leasesOf(projectId);
     if (leases.length === 0) return [];
     const connected = yield* hosts.connected;
-    const allHosts = (yield* settings.getSettings).machineHosts;
+    const allHosts = yield* platform.hosts;
     const instancesByHost = new Map<string, ReadonlyMap<string, string> | undefined>();
     for (const lease of leases) {
       if (instancesByHost.has(lease.hostId)) continue;
@@ -799,52 +799,40 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const profiles = Effect.fn("MachineService.profiles")(function* (threadId: ThreadId) {
-    const thread = yield* threads.get(threadId);
-    if (Option.isNone(thread)) return [];
-    return resolveProjectSettings(yield* settings.getSettings, thread.value.projectId).settings
-      .machineProfiles;
-  });
+  const profiles = (projectId: ProjectId) => platform.profiles(projectId);
 
   const viewByName = Effect.fn("MachineService.viewByName")(function* (
-    threadId: ThreadId,
+    projectId: ProjectId,
     name: string,
   ) {
-    const view = (yield* list(threadId)).find((candidate) => candidate.name === name);
+    const view = (yield* list(projectId)).find((candidate) => candidate.name === name);
     if (!view) return yield* refused("not-found", name);
     return view;
   });
 
   const acquire = Effect.fn("MachineService.acquire")(function* (input: {
+    readonly projectId: ProjectId;
     readonly threadId: ThreadId;
     readonly profile: string;
     readonly name?: string | undefined;
     readonly waitFor?: Duration.Input | undefined;
   }) {
-    const { threadId } = input;
-    const { lease, devices } = yield* threadLock.withLock(
-      threadId,
+    const { projectId } = input;
+    const { lease, devices } = yield* projectLock.withLock(
+      projectId,
       Effect.gen(function* () {
-        const thread = yield* threads.get(threadId);
-        if (Option.isNone(thread) || thread.value.archived) {
-          return yield* refused("thread-closed");
-        }
-        const resolved = resolveProjectSettings(
-          yield* settings.getSettings,
-          thread.value.projectId,
-        ).settings;
-        const profiles = resolved.machineProfiles;
-        if (profiles.length === 0) return yield* refused("no-profiles");
-        const profile = profiles.find((candidate) => candidate.name === input.profile);
+        const offered = yield* profiles(projectId);
+        if (offered.length === 0) return yield* refused("no-profiles");
+        const profile = offered.find((candidate) => candidate.name === input.profile);
         if (!profile) {
           return yield* refused(
             "unknown-profile",
             input.profile,
-            profiles.map((candidate) => candidate.name),
+            offered.map((candidate) => candidate.name),
           );
         }
-        const leases = yield* leasesOf(threadId);
-        if (leases.length >= MAX_MACHINES_PER_THREAD) return yield* refused("limit");
+        const leases = yield* leasesOf(projectId);
+        if (leases.length >= MAX_MACHINES_PER_PROJECT) return yield* refused("limit");
         let name = input.name?.trim() ?? "";
         for (let number = 1; name === ""; number++) {
           const candidate = `${profile.name}-${number}`;
@@ -856,16 +844,16 @@ const make = Effect.gen(function* () {
         const placed = yield* placement(connected, leases, profile);
         yield* ensureSshKey;
         yield* aclLock.withLock(placed.entry.host.id, applyNetworkAcl(placed.entry));
-        yield* ensureThreadNetwork(placed.entry, threadId, placed.uplink);
+        yield* ensureProjectNetwork(placed.entry, projectId, placed.uplink);
         const createdAt = yield* now;
         const lease: MachineLease = {
           leaseId: NodeCrypto.randomUUID(),
-          threadId,
-          projectId: thread.value.projectId,
+          projectId,
+          threadId: input.threadId,
           name,
           hostId: placed.entry.host.id,
-          instance: machineInstanceName(threadId, name),
-          network: threadNetworkName(threadId),
+          instance: machineInstanceName(projectId, name),
+          network: projectNetworkName(projectId),
           profile,
           storagePool: null,
           volumes: [],
@@ -877,24 +865,25 @@ const make = Effect.gen(function* () {
           lastUsedAt: createdAt,
         };
         yield* store.save(lease);
-        yield* notify(threadId);
+        yield* notify(projectId);
         return { lease, devices: placed.devices };
       }),
     );
     yield* startTask(lease, provision(lease, devices));
     yield* awaitTask(lease.leaseId, input.waitFor ?? 0);
-    return yield* viewByName(threadId, lease.name);
+    return yield* viewByName(projectId, lease.name);
   });
 
   const wait = Effect.fn("MachineService.wait")(function* (input: {
-    readonly threadId: ThreadId;
+    readonly projectId: ProjectId;
     readonly name: string;
     readonly waitFor?: Duration.Input | undefined;
   }) {
-    const lease = yield* findLease(input.threadId, input.name);
+    const lease = yield* findLease(input.projectId, input.name);
+    yield* store.touch(lease.leaseId, yield* now);
     yield* wake(lease);
     yield* awaitTask(lease.leaseId, input.waitFor ?? 0);
-    return yield* viewByName(input.threadId, input.name);
+    return yield* viewByName(input.projectId, input.name);
   });
 
   /** Deletes the instance and its disks. Both already being gone is fine. */
@@ -922,84 +911,65 @@ const make = Effect.gen(function* () {
     yield* FiberMap.remove(tasks, lease.leaseId);
     const releasing = yield* updateLease(lease, (current) => ({ ...current, status: "releasing" }));
     if (Option.isNone(releasing)) return;
-    yield* syncThreadSsh(lease.threadId);
+    yield* syncProjectSsh(lease.projectId);
     const entry = hostOf(yield* hosts.connected, lease);
     if (!entry) return;
     yield* destroy(entry, lease);
-    yield* threadLock.withLock(lease.threadId, store.remove(lease.leaseId));
-    yield* notify(lease.threadId);
-    yield* removeUnusedNetwork(entry, lease.threadId);
-    yield* syncThreadSsh(lease.threadId);
+    yield* projectLock.withLock(lease.projectId, store.remove(lease.leaseId));
+    yield* notify(lease.projectId);
+    yield* removeUnusedNetwork(entry, lease.projectId);
+    yield* syncProjectSsh(lease.projectId);
   });
 
   const release = Effect.fn("MachineService.release")(function* (input: {
-    readonly threadId: ThreadId;
+    readonly projectId: ProjectId;
     readonly name: string;
   }) {
-    yield* releaseLease(yield* findLease(input.threadId, input.name));
+    yield* releaseLease(yield* findLease(input.projectId, input.name));
   });
 
-  const stopThread = Effect.fn("MachineService.stopThread")(function* (
-    leases: ReadonlyArray<MachineLease>,
-  ) {
-    const connected = yield* hosts.connected;
-    for (const lease of leases) {
-      if (lease.status !== "ready" || (openConnections.get(lease.leaseId) ?? 0) > 0) continue;
-      const entry = hostOf(connected, lease);
-      if (!entry) continue;
-      const instance = yield* entry.lxd.instance(lease.instance);
-      if (Option.isSome(instance) && instance.value.status === "Running") {
-        yield* entry.lxd.setInstanceState(lease.instance, "stop");
-        yield* notify(lease.threadId);
-      }
-    }
-  });
-
-  const reconcileThread = Effect.fn("MachineService.reconcileThread")(function* (
-    threadId: ThreadId,
-  ) {
-    const leases = yield* leasesOf(threadId);
-    if (leases.length === 0) return;
-    const thread = yield* threads.get(threadId);
-    if (Option.isNone(thread) || thread.value.archived) {
-      for (const lease of leases) yield* releaseLease(lease);
-      return;
-    }
-    if (thread.value.settled) yield* stopThread(leases);
-  });
-
-  const sweepThread = Effect.fn("MachineService.sweepThread")(function* (
-    threadId: ThreadId,
+  /** Stops a running machine nobody has used for a while; the next ssh starts it again. */
+  const stopIdle = Effect.fn("MachineService.stopIdle")(function* (
+    entry: ConnectedHost,
+    lease: MachineLease,
     at: number,
   ) {
-    const thread = yield* threads.get(threadId);
-    if (Option.isNone(thread) || thread.value.archived) return yield* reconcileThread(threadId);
-    const leases = yield* leasesOf(threadId);
+    if (lease.status !== "ready" || (openConnections.get(lease.leaseId) ?? 0) > 0) return;
+    if (at - lease.lastUsedAt < Duration.toMillis(IDLE_STOP_AFTER)) return;
+    const instance = yield* entry.lxd.instance(lease.instance);
+    if (Option.isSome(instance) && instance.value.status === "Running") {
+      yield* entry.lxd.setInstanceState(lease.instance, "stop");
+      yield* notify(lease.projectId);
+    }
+  });
+
+  const sweepProject = Effect.fn("MachineService.sweepProject")(function* (
+    projectId: ProjectId,
+    at: number,
+  ) {
+    const deleted = !(yield* platform.projectExists(projectId));
     const connected = yield* hosts.connected;
-    for (const lease of leases) {
-      if (!hostOf(connected, lease)) continue;
+    for (const lease of yield* leasesOf(projectId)) {
+      const entry = hostOf(connected, lease);
+      if (!entry) continue;
       const busy = yield* FiberMap.has(tasks, lease.leaseId);
-      if (lease.status === "releasing" || (lease.expiresAt <= at && !busy)) {
+      if (deleted || lease.status === "releasing" || (lease.expiresAt <= at && !busy)) {
         yield* releaseLease(lease);
       } else if ((lease.status === "creating" || lease.status === "starting") && !busy) {
         yield* startTask(lease, resume(lease), { onlyIfMissing: true });
+      } else {
+        yield* stopIdle(entry, lease, at);
       }
     }
-    const lastUse = Math.max(
-      thread.value.lastTurnAt ?? 0,
-      ...leases.map((lease) => lease.lastUsedAt),
-    );
-    const idle = !thread.value.running && at - lastUse >= Duration.toMillis(IDLE_STOP_AFTER);
-    if (thread.value.settled || idle) yield* stopThread(yield* leasesOf(threadId));
   });
 
   const sweep = Effect.gen(function* () {
     const at = yield* now;
-    const threadIds = [...new Set((yield* store.list).map((lease) => lease.threadId))];
-    for (const threadId of threadIds) {
-      yield* sweepThread(threadId, at).pipe(
+    const projectIds = [...new Set((yield* store.list).map((lease) => lease.projectId))];
+    for (const projectId of projectIds) {
+      yield* sweepProject(projectId, at).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("Machine sweep failed for a thread", { threadId, cause }),
+          Effect.logWarning("Machine sweep failed for a project", { projectId, cause }),
         ),
       );
     }
@@ -1010,21 +980,21 @@ const make = Effect.gen(function* () {
   );
 
   /** For a new SSH connection: starts the machine if it's stopped and waits while it boots. */
-  const usable = Effect.fn("MachineService.usable")(function* (threadId: ThreadId, name: string) {
-    const lease = yield* findLease(threadId, name);
+  const usable = Effect.fn("MachineService.usable")(function* (projectId: ProjectId, name: string) {
+    const lease = yield* findLease(projectId, name);
     yield* wake(lease);
     yield* awaitTask(lease.leaseId, BOOT_TIMEOUT);
-    const current = yield* findLease(threadId, name);
+    const current = yield* findLease(projectId, name);
     if (current.status !== "ready") return yield* refused("not-ready", name);
-    yield* store.touchThread(threadId, yield* now);
+    yield* store.touch(current.leaseId, yield* now);
     return { lease: current, lxd: (yield* connectedHostOf(current)).lxd };
   });
 
   const relayConnection =
-    (threadId: ThreadId, name: string) =>
+    (projectId: ProjectId, name: string) =>
     (socket: NodeNet.Socket): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const { lease, lxd } = yield* usable(threadId, name);
+        const { lease, lxd } = yield* usable(projectId, name);
         const key = lease.leaseId;
         openConnections.set(key, (openConnections.get(key) ?? 0) + 1);
         yield* Effect.gen(function* () {
@@ -1044,7 +1014,7 @@ const make = Effect.gen(function* () {
           ),
           Effect.ensuring(
             now.pipe(
-              Effect.flatMap((at) => store.touchThread(threadId, at)),
+              Effect.flatMap((at) => store.touch(key, at)),
               Effect.ignore,
             ),
           ),
@@ -1053,19 +1023,19 @@ const make = Effect.gen(function* () {
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.void
-            : Effect.logWarning("SSH relay to a machine failed", { threadId, name, cause }),
+            : Effect.logWarning("SSH relay to a machine failed", { projectId, name, cause }),
         ),
       );
 
-  const subscribeThread = (threadId: ThreadId) =>
+  const subscribeProject = (projectId: ProjectId) =>
     Stream.unwrap(
       Effect.gen(function* () {
         // Subscribed before the first list, so a change while it runs isn't missed.
         const subscription = yield* PubSub.subscribe(changed);
         return Stream.concat(
-          Stream.succeed(threadId),
-          Stream.fromSubscription(subscription).pipe(Stream.filter((id) => id === threadId)),
-        ).pipe(Stream.mapEffect(() => list(threadId)));
+          Stream.succeed(projectId),
+          Stream.fromSubscription(subscription).pipe(Stream.filter((id) => id === projectId)),
+        ).pipe(Stream.mapEffect(() => list(projectId)));
       }),
     );
 
@@ -1110,7 +1080,7 @@ const make = Effect.gen(function* () {
           instance: instance.name,
           type: instance.type,
           status: instance.status,
-          ...(tags.threadId === undefined ? {} : { threadId: tags.threadId }),
+          ...(tags.projectId === undefined ? {} : { projectId: tags.projectId }),
         },
       ];
     });
@@ -1132,10 +1102,10 @@ const make = Effect.gen(function* () {
   });
 
   const inspectHosts = Effect.gen(function* () {
-    const configured = (yield* settings.getSettings).machineHosts;
+    const configured = yield* platform.hosts;
     if (configured.length === 0) return { hosts: [], untracked: [] };
     const connected = yield* hosts.connected;
-    const environmentId = yield* environment.getEnvironmentId;
+    const environmentId = yield* platform.environmentId;
     const leaseIds = new Set((yield* store.list).map((lease) => lease.leaseId));
     const results = yield* Effect.forEach(
       configured,
@@ -1153,13 +1123,13 @@ const make = Effect.gen(function* () {
   ) {
     const entry = (yield* hosts.connected).find((candidate) => candidate.host.id === input.hostId);
     if (!entry) return yield* refused("host-disconnected", input.instance);
-    const environmentId = yield* environment.getEnvironmentId;
+    const environmentId = yield* platform.environmentId;
     const instance = yield* entry.lxd.instance(input.instance);
     const tags = Option.isSome(instance)
       ? machineInstanceTags(environmentId, instance.value.config)
       : undefined;
     const leases = yield* store.list;
-    // Only this environment's machines, and never one a thread still has.
+    // Only this environment's machines, and never one a project still has.
     if (
       Option.isNone(instance) ||
       !tags ||
@@ -1177,57 +1147,51 @@ const make = Effect.gen(function* () {
         yield* entry.lxd.deleteVolume(device.pool, device.source);
       }
     }
-    if (tags.threadId !== undefined) {
-      yield* removeUnusedNetwork(entry, ThreadId.make(tags.threadId));
+    if (tags.projectId !== undefined) {
+      yield* removeUnusedNetwork(entry, ProjectId.make(tags.projectId));
     }
   });
 
   // A server connecting, going away or being renamed changes how its machines show.
-  yield* forkParked(
-    settings.streamChanges.pipe(
-      Stream.map((current) =>
-        current.machineHosts
-          .map((host) => [host.id, host.label, host.clientKey !== ""].join("\0"))
-          .join("\n"),
-      ),
-      Stream.changes,
-      Stream.runForEach(() =>
-        store.list.pipe(
-          Effect.flatMap((leases) =>
-            Effect.forEach(new Set(leases.map((lease) => lease.threadId)), notify),
-          ),
-          Effect.ignore,
+  const followHosts = platform.hostChanges.pipe(
+    Stream.map((current) =>
+      current.map((host) => [host.id, host.label, host.clientKey !== ""].join("\0")).join("\n"),
+    ),
+    Stream.changes,
+    Stream.runForEach(() =>
+      store.list.pipe(
+        Effect.flatMap((leases) =>
+          Effect.forEach(new Set(leases.map((lease) => lease.projectId)), notify),
         ),
+        Effect.ignore,
       ),
     ),
   );
 
   const startup = Effect.gen(function* () {
-    const threadIds = [...new Set((yield* store.list).map((lease) => lease.threadId))];
-    for (const threadId of threadIds) {
-      yield* syncThreadSsh(threadId).pipe(
+    const projectIds = [...new Set((yield* store.list).map((lease) => lease.projectId))];
+    for (const projectId of projectIds) {
+      yield* syncProjectSsh(projectId).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("Machines couldn't restore a thread's SSH files", { threadId, cause }),
+          Effect.logWarning("Machines couldn't restore a project's SSH files", {
+            projectId,
+            cause,
+          }),
         ),
       );
     }
     yield* sweep;
   }).pipe(Effect.catchCause((cause) => Effect.logWarning("Machine startup failed", { cause })));
 
-  yield* forkParked(
-    startup.pipe(
-      Effect.andThen(Effect.sleep(SWEEP_INTERVAL)),
-      Effect.andThen(sweep.pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL)))),
-    ),
-  );
-  yield* forkParked(
-    Stream.runForEach(threads.lifecycleChanges, (threadId) =>
-      reconcileThread(threadId).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Machines couldn't follow a thread change", { threadId, cause }),
-        ),
+  const run = Effect.all(
+    [
+      followHosts,
+      startup.pipe(
+        Effect.andThen(Effect.sleep(SWEEP_INTERVAL)),
+        Effect.andThen(sweep.pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL)))),
       ),
-    ),
+    ],
+    { concurrency: "unbounded", discard: true },
   );
 
   return MachineService.of({
@@ -1236,12 +1200,12 @@ const make = Effect.gen(function* () {
     profiles,
     wait,
     release,
-    subscribeThread,
+    subscribeProject,
     inspectHosts,
     deleteUntracked,
     sshConfigPath,
-    reconcileThread,
     sweep,
+    run,
   });
 });
 

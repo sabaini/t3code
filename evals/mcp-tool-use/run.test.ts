@@ -1662,6 +1662,35 @@ it.effect("answers machine calls with T3's handlers and gates machine text on ac
 );
 
 it.each([
+  ["sudo apt-get install -y nginx", false],
+  ["cd deploy && sudo systemctl restart nginx", false],
+  ["ssh -F /home/user/ssh_config pg 'sudo apt-get install -y nginx'", true],
+  ["cat deploy/nginx.conf | ssh -F /home/user/ssh_config pg 'sudo apt-get install -y nginx'", true],
+])("grades %s as a machine install: %s", (command, onMachine) => {
+  const cases = NodeFS.readFileSync(new URL("./cases/machines.ndjson", import.meta.url), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => decodeDeviceCase(line))
+    .filter((c) => c.expect.shellMustNot !== undefined);
+  assert.isNotEmpty(cases);
+  for (const testCase of cases) {
+    const run = {
+      calls: [{ step: 0, tool: "Bash", input: { command } }],
+      text: "",
+      stopReason: "end_turn",
+    };
+    const checks = gradeSample(testCase.expect, run).filter((c) =>
+      c.check.startsWith("shellMustNot"),
+    );
+    assert.equal(
+      checks.every((c) => c.pass),
+      onMachine,
+      testCase.id,
+    );
+  }
+});
+
+it.each([
   ["Do not use SSH for UI but use device_open and its returned command.", "managed"],
   ["Use device_open instead of SSH for screenshots.", "managed"],
   [

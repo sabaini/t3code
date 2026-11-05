@@ -199,6 +199,8 @@ const CLEARED_TABLES: ReadonlyArray<string> = [
   "auth_sessions",
   "auth_pairing_links",
   "peer_environment_links",
+  // A dev server with the same environment id would sweep and release the real machines.
+  "machine_project_leases",
 ];
 
 const PROVIDER_SESSIONS_TABLE = "orchestration_v2_projection_provider_sessions";
@@ -381,8 +383,14 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
             AND stream_id NOT IN (SELECT thread_id FROM kept_threads))
            OR (aggregate_kind = 'project'
             AND stream_id NOT IN (SELECT project_id FROM kept_projects))`;
+      // Machine leases are created by their service, so older sources lack them.
+      const present = new Set(
+        (yield* sql<{ name: string }>`SELECT name FROM sqlite_master WHERE type = 'table'`).map(
+          (row) => row.name,
+        ),
+      );
       for (const table of CLEARED_TABLES) {
-        yield* sql`DELETE FROM ${sql(table)}`;
+        if (present.has(table)) yield* sql`DELETE FROM ${sql(table)}`;
       }
     }),
   );

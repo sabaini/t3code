@@ -226,7 +226,7 @@ Passes per case, main's text → the request_secret guidance change stacked on t
 
 ## Machine cases
 
-`cases/machines.ndjson` checks that agents with machine access route system work to LXD machines: `MACH-01` verifies an install script on a machine instead of the workstation, `MACH-02` creates two machines for a cluster and releases both, and `MACH-03` is a control where a plain test run stays local. `world.machineAgentAccess` gives the session the `machines` capability and T3's machine text; `world.machineProfiles` replaces the default `vm` and `container` profiles. Machine results come from T3's real machine handlers over an in-memory MachineService, and the shell simulator plays the machines.
+`cases/machines.ndjson` checks that agents with machine access route system work to LXD machines: `MACH-01` verifies an install script on a machine instead of the workstation, `MACH-02` creates two machines for a cluster and releases both, `MACH-03` is a control where a plain test run stays local, and `MACH-04` uses a machine another thread of the project made without releasing it. `world.machineAgentAccess` gives the session the `machines` capability and T3's machine text; `world.machineProfiles` replaces the default `vm` and `container` profiles; `world.projectMachines` gives the project machines another thread made. Machine results come from T3's real machine handlers over an in-memory MachineService, and the shell simulator plays the machines.
 
 ## Where T3's text lives
 

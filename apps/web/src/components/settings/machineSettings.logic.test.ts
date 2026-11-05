@@ -77,7 +77,7 @@ it("machineHostsAttention warns about broken servers and stray machines, and is 
     {
       hosts: [{ hostId: "lxd-1", status: { ...status, versionSupported: false } }],
       untracked: [stray],
-      expected: "Needs attention · 1 machine without a thread",
+      expected: "Needs attention · 1 machine without a project",
     },
     {
       hosts: [
@@ -85,7 +85,7 @@ it("machineHostsAttention warns about broken servers and stray machines, and is 
         { hostId: "lxd-2", status: { ...status, unsafe: ["restricted.devices.disk"] } },
       ],
       untracked: [stray, stray],
-      expected: "2 need attention · 2 machines without a thread",
+      expected: "2 need attention · 2 machines without a project",
     },
   ];
   for (const { expected, ...inspection } of cases) {

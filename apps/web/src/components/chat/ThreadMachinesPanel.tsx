@@ -1,5 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, MachineState, MachineView, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  MachineState,
+  MachineView,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import {
   machineDeletionLabel,
@@ -55,17 +61,19 @@ const STATE_DOT_CLASS = {
 // Settings change rarely, so subscribing only where an LXD server is connected costs nothing elsewhere.
 const selectHasMachineHosts = (settings: UnifiedSettings) => settings.machineHosts.length > 0;
 
+/** The project's machines: every thread of it can use them. */
 export function ThreadMachinesPanel(props: {
   readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
   readonly threadId: ThreadId;
   readonly onRunShellCommand?: ((command: string) => void) | undefined;
 }) {
   const hasHosts = useEnvironmentSettings(props.environmentId, selectHasMachineHosts);
   const machinesQuery = useEnvironmentQuery(
     hasHosts
-      ? machineEnvironment.thread({
+      ? machineEnvironment.project({
           environmentId: props.environmentId,
-          input: { threadId: props.threadId },
+          input: { projectId: props.projectId },
         })
       : null,
   );
@@ -87,7 +95,7 @@ export function ThreadMachinesPanel(props: {
     setReleasing(true);
     const result = await release({
       environmentId: props.environmentId,
-      input: { threadId: props.threadId, name: machine.name },
+      input: { projectId: props.projectId, name: machine.name },
     });
     setReleasing(false);
     setPendingRelease(null);
@@ -179,6 +187,11 @@ export function ThreadMachinesPanel(props: {
                   <p className="text-muted-foreground">
                     {[machine.dnsName, ...machine.addresses].join(" · ")}
                   </p>
+                  <p className="text-muted-foreground">
+                    {machine.threadId === props.threadId
+                      ? "Made in this thread"
+                      : "Made in another thread of this project"}
+                  </p>
                   {machine.error ? <p className="text-destructive">{machine.error}</p> : null}
                 </TooltipPopup>
               </Tooltip>
@@ -247,8 +260,8 @@ export function ThreadMachinesPanel(props: {
           <AlertDialogHeader>
             <AlertDialogTitle>Release {pendingRelease?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The machine is deleted with its disks, and anything on it is lost. If the agent is
-              still using it, its commands there fail.
+              The machine is deleted with its disks, and anything on it is lost. If an agent in any
+              of this project's threads is still using it, its commands there fail.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
