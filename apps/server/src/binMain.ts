@@ -24,7 +24,7 @@ export async function runCliCommand() {
     const { runManagedChatGptTokenCli } = await import("./cli/managedChatGptToken.ts");
     await runManagedChatGptTokenCli(process.argv.slice(3));
   } else if (command === "machine-ssh-proxy") {
-    const { runMachineSshProxy } = await import("./machines/sshProxy.ts");
+    const { runMachineSshProxy } = await import("@t3tools/machines/sshProxy");
     runMachineSshProxy(process.argv.slice(3));
   } else if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");

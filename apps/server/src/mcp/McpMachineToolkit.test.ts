@@ -12,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
 
-import * as MachineService from "../machines/MachineService.ts";
+import * as MachineService from "@t3tools/machines/MachineService";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";

@@ -50,4 +50,4 @@ export class MachinePlatform extends Context.Service<
       MachinePlatformError
     >;
   }
->()("t3/machines/MachinePlatform") {}
+>()("@t3tools/machines/MachinePlatform") {}

@@ -17,7 +17,7 @@ import * as Layer from "effect/Layer";
 // oxlint-disable-next-line t3code/no-raw-mcp-registration -- the eval calls the machine tools McpHttpServer registered and registers none.
 import { McpSchema, McpServer } from "effect/ai";
 
-import * as MachineService from "../../apps/server/src/machines/MachineService.ts";
+import * as MachineService from "@t3tools/machines/MachineService";
 import * as McpHttpServer from "../../apps/server/src/mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { liveThreadShell } from "../../apps/server/src/mcp/McpToolAccess.testkit.ts";

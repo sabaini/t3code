@@ -10,9 +10,9 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, MachineProfile, ProjectId, ThreadId } from "@t3tools/contracts";
-import * as MachineHosts from "../src/machines/MachineHosts.ts";
-import * as MachineLeaseStore from "../src/machines/MachineLeaseStore.ts";
-import * as MachineService from "../src/machines/MachineService.ts";
+import * as MachineHosts from "@t3tools/machines/MachineHosts";
+import * as MachineLeaseStore from "@t3tools/machines/MachineLeaseStore";
+import * as MachineService from "@t3tools/machines/MachineService";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";

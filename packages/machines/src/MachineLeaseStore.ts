@@ -101,7 +101,7 @@ export class MachineLeaseStore extends Context.Service<
     readonly remove: (leaseId: string) => Effect.Effect<void, MachineLeaseStoreError>;
     readonly touch: (leaseId: string, at: number) => Effect.Effect<void, MachineLeaseStoreError>;
   }
->()("t3/machines/MachineLeaseStore") {}
+>()("@t3tools/machines/MachineLeaseStore") {}
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

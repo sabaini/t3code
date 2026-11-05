@@ -1,5 +1,5 @@
 import { ProjectId } from "@t3tools/contracts";
-import { MachinePlatform, MachinePlatformError } from "./MachinePlatform.ts";
+import { MachinePlatform, MachinePlatformError } from "@t3tools/machines/MachinePlatform";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Effect from "effect/Effect";

@@ -10,7 +10,7 @@ import {
 import { Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
 
-import * as MachineService from "../../../machines/MachineService.ts";
+import * as MachineService from "@t3tools/machines/MachineService";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";

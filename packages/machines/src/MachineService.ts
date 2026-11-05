@@ -229,7 +229,7 @@ export class MachineService extends Context.Service<
      */
     readonly run: Effect.Effect<void>;
   }
->()("t3/machines/MachineService") {}
+>()("@t3tools/machines/MachineService") {}
 
 const sha = (value: string, length: number) =>
   NodeCrypto.createHash("sha256").update(value).digest("hex").slice(0, length);
