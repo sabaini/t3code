@@ -19,7 +19,7 @@ boundary: one LXD project and one certificate.
 
 T3 Code only creates machines in a restricted LXD project whose certificate can make OVN networks
 on exactly one uplink but can't hand out the host: no host devices, no idmaps, no privileged
-containers. [`projectSandbox`](../../apps/server/src/machines/MachineSandbox.ts) lists what a
+containers. [`projectSandbox`](../../packages/machines/src/MachineSandbox.ts) lists what a
 project is missing or allows that it shouldn't, and placement refuses a host until both lists are
 empty. A token that trusts the certificate for more than one project, or none, is refused when
 connecting.
@@ -40,7 +40,7 @@ refused, since that NIC wouldn't be on the project's network.
 The ACL also keeps the T3 Code host from reaching machines, and the host may not route to the OVN
 network anyway. So `ssh` never connects to a machine's address. Each machine gets a Unix socket in
 the project's state directory; the project's `ssh_config` points `ProxyCommand` at
-[`t3 machine-ssh-proxy`](../../apps/server/src/machines/sshProxy.ts), which joins that socket to
+[`t3 machine-ssh-proxy`](../../packages/machines/src/sshProxy.ts), which joins that socket to
 an `nc` the server runs on the machine through LXD's exec API. Host keys are read through LXD's
 file API once cloud-init finishes, and pinned in the project's `known_hosts`, so the first
 connection never trusts an unknown key.
@@ -64,3 +64,12 @@ reason `migrate-dev-db` never copies leases.
 
 MCP tool calls wait at most 40 seconds for a machine to boot, because Codex gives an MCP call 60
 by default. Longer boots continue in the background and the agent calls `machine_wait`.
+
+## Outside T3 Code
+
+The core lives in `packages/machines` and gets everything T3-specific through
+[`MachinePlatform`](../../packages/machines/src/MachinePlatform.ts): settings, the environment id,
+whether a project exists, the state directory, and running `ssh-keygen` and `openssl`. That keeps
+it hostable by something other than T3 Code's server, such as a standalone MCP server. Such a host
+forks `MachineService.run` itself, and its binary must answer `machine-ssh-proxy`, because the
+`ssh_config` it writes calls the running binary with that subcommand.

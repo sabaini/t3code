@@ -1,0 +1,43 @@
+{
+  "name": "@t3tools/machines",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./MachineHosts": {
+      "types": "./src/MachineHosts.ts",
+      "import": "./src/MachineHosts.ts"
+    },
+    "./MachineLeaseStore": {
+      "types": "./src/MachineLeaseStore.ts",
+      "import": "./src/MachineLeaseStore.ts"
+    },
+    "./MachinePlatform": {
+      "types": "./src/MachinePlatform.ts",
+      "import": "./src/MachinePlatform.ts"
+    },
+    "./MachineService": {
+      "types": "./src/MachineService.ts",
+      "import": "./src/MachineService.ts"
+    },
+    "./sshProxy": {
+      "types": "./src/sshProxy.ts",
+      "import": "./src/sshProxy.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "effect": "catalog:",
+    "undici": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

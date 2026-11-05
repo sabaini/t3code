@@ -90,7 +90,7 @@ export class MachineHosts extends Context.Service<
     >;
     readonly connected: Effect.Effect<ReadonlyArray<ConnectedMachineHost>, ServerSettingsError>;
   }
->()("t3/machines/MachineHosts") {}
+>()("@t3tools/machines/MachineHosts") {}
 
 /** Stable for a server and project, so leases find their host again after it reconnects. */
 const machineHostId = (serverCertificate: string, project: string) =>
