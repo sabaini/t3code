@@ -1,7 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, ThreadId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+  TrimmedString,
+} from "./baseSchemas.ts";
 
 export const MachineHostId = TrimmedNonEmptyString.check(
   Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/),
@@ -125,12 +131,14 @@ export const MachineView = Schema.Struct({
   diskSizesGiB: Schema.Array(Schema.Int),
   state: MachineState,
   hostLabel: Schema.String,
-  /** The name the thread's other machines reach it by. */
+  /** The name the project's other machines reach it by. */
   dnsName: Schema.String,
-  /** Where the thread's other machines reach it, while it runs. */
+  /** Where the project's other machines reach it, while it runs. */
   addresses: Schema.Array(Schema.String),
   expiresAt: IsoDateTime,
   sshCommand: Schema.String,
+  /** The thread whose agent created it. Every thread of the project may use or release it. */
+  threadId: ThreadId,
   error: Schema.optional(Schema.String),
 });
 export type MachineView = typeof MachineView.Type;
@@ -150,7 +158,7 @@ export const MachineToolAcquireInput = Schema.Struct({
   name: Schema.optional(
     MachineName.annotate({
       description:
-        "The machine's ssh host name in this thread. Defaults to the profile name and a number, such as vm-1.",
+        "The machine's ssh host name in this project. Defaults to the profile name and a number, such as vm-1.",
     }),
   ),
 });
@@ -182,6 +190,8 @@ export const MachineToolListResult = Schema.Struct({
   profiles: Schema.Array(MachineProfile),
   /** Pass it to ssh, scp or rsync with `-F`; it exists before the first machine does. */
   sshConfig: Schema.String,
+  /** The calling thread: a machine with another `threadId` is another thread's, which may still use it. */
+  threadId: ThreadId,
   /** Set when this thread's agent runs in a sandbox that blocks ssh to machines. */
   notice: Schema.optional(Schema.String),
 });
@@ -192,13 +202,13 @@ export class MachineRpcError extends Schema.TaggedError<MachineRpcError>()("Mach
   message: Schema.String,
 }) {}
 
-export const MachineThreadInput = Schema.Struct({ threadId: ThreadId });
-export type MachineThreadInput = typeof MachineThreadInput.Type;
+export const MachineProjectInput = Schema.Struct({ projectId: ProjectId });
+export type MachineProjectInput = typeof MachineProjectInput.Type;
 
-export const MachineThreadState = Schema.Struct({ machines: Schema.Array(MachineView) });
-export type MachineThreadState = typeof MachineThreadState.Type;
+export const MachineProjectState = Schema.Struct({ machines: Schema.Array(MachineView) });
+export type MachineProjectState = typeof MachineProjectState.Type;
 
-export const MachineReleaseInput = Schema.Struct({ threadId: ThreadId, name: MachineName });
+export const MachineReleaseInput = Schema.Struct({ projectId: ProjectId, name: MachineName });
 export type MachineReleaseInput = typeof MachineReleaseInput.Type;
 
 export const MachineHostConnectInput = Schema.Struct({
@@ -228,7 +238,7 @@ export const MachineHostStatus = Schema.Struct({
   version: Schema.String,
   versionSupported: Schema.Boolean,
   instanceTypes: Schema.Array(Schema.String),
-  /** The OVN uplink thread networks use, when the project allows exactly one. */
+  /** The OVN uplink project networks use, when the LXD project allows exactly one. */
   uplink: Schema.optional(Schema.String),
   /** Project settings machines need, as `key=value`. */
   missing: Schema.Array(Schema.String),
@@ -250,7 +260,7 @@ export const UntrackedMachine = Schema.Struct({
   instance: Schema.String,
   type: Schema.String,
   status: Schema.String,
-  threadId: Schema.optional(Schema.String),
+  projectId: Schema.optional(Schema.String),
 });
 export type UntrackedMachine = typeof UntrackedMachine.Type;
 

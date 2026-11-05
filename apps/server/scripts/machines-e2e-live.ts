@@ -272,12 +272,11 @@ try {
     const client = yield* RpcClient.make(WsRpcGroup);
 
     const waitMachines = (
-      threadId: ThreadId,
       description: string,
       predicate: (machines: ReadonlyArray<MachineView>) => boolean,
       timeout: Duration.Input = "6 minutes",
     ) =>
-      client["machines.subscribeThread"]({ threadId }).pipe(
+      client["machines.subscribeProject"]({ projectId }).pipe(
         Stream.map((state) => state.machines),
         Stream.filter(predicate),
         Stream.runHead,
@@ -294,9 +293,9 @@ try {
         ),
       );
 
-    const watchMachines = (threadId: ThreadId, label: string) => {
+    const watchMachines = (label: string) => {
       let last = "";
-      return client["machines.subscribeThread"]({ threadId }).pipe(
+      return client["machines.subscribeProject"]({ projectId }).pipe(
         Stream.runForEach((state) =>
           Effect.sync(() => {
             const summary = summarize(state.machines);
@@ -354,7 +353,7 @@ try {
       );
     };
 
-    const dispatch = (type: "thread.settle" | "thread.archive", threadId: ThreadId) =>
+    const dispatch = (type: "thread.archive", threadId: ThreadId) =>
       client["orchestration.dispatchCommand"]({
         type,
         commandId: CommandId.make(NodeCrypto.randomUUID()),
@@ -403,7 +402,7 @@ try {
 
     // 3. A Claude thread creates and uses two machines.
     const claude = ThreadId.make(NodeCrypto.randomUUID());
-    yield* watchMachines(claude, "claude");
+    yield* watchMachines("project");
     step(`Launching Claude (${CLAUDE_MODEL}) thread ${claude}`);
     yield* launch(
       claude,
@@ -425,7 +424,6 @@ try {
     NodeAssert.ok(claudeReply.includes("E2E_DONE"), "Claude didn't finish the task");
 
     const machines = yield* waitMachines(
-      claude,
       "two running machines",
       (list) => list.length === 2 && list.every((machine) => machine.state === "ready"),
       "1 minute",
@@ -472,41 +470,32 @@ try {
       NodeAssert.ok(passed, `Check failed on ${machine.name}: ${command}`);
     }
 
-    // 5. Settling stops machines; ssh starts them again.
-    step("Settling the Claude thread");
-    yield* dispatch("thread.settle", claude);
-    yield* waitMachines(
-      claude,
-      "both stopped",
-      (list) => list.length === 2 && list.every((machine) => machine.state === "stopped"),
+    // 5. Machines are the project's: archiving the thread that made them leaves them.
+    step("Archiving the Claude thread");
+    yield* dispatch("thread.archive", claude);
+    const kept = yield* waitMachines("both still there", (list) => list.length === 2, "1 minute");
+    NodeAssert.ok(kept.every((machine) => machine.threadId === claude));
+
+    // 6. ssh starts a stopped machine again.
+    step(`Stopping ${box.name} on LXD, then ssh to it`);
+    NodeChildProcess.execFileSync("lxc", [
+      "stop",
+      box.dnsName.replace(/\.lxd$/, ""),
+      "--project",
+      lxdProject,
+    ]);
+    yield* waitMachines(`${box.name} stopped`, (list) =>
+      list.some((machine) => machine.name === box.name && machine.state === "stopped"),
     );
-    lxdSnapshot("after settle");
-    step(`ssh to stopped ${box.name}`);
     const again = yield* ssh(box.sshCommand, "uptime -p");
     step(`  ${box.name}: exit ${again.code}: ${again.output}`);
     NodeAssert.equal(again.code, 0, "ssh didn't start the stopped machine");
-    yield* waitMachines(claude, `${box.name} running again`, (list) =>
+    yield* waitMachines(`${box.name} running again`, (list) =>
       list.some((machine) => machine.name === box.name && machine.state === "ready"),
     );
 
-    // 6. The user releases one from the panel; archiving deletes the rest.
-    step(`Releasing ${vm.name} as the panel does`);
-    yield* client["machines.release"]({ threadId: claude, name: vm.name });
-    yield* waitMachines(claude, `${vm.name} gone`, (list) =>
-      list.every((machine) => machine.name !== vm.name),
-    );
-    const afterRelease = lxdSnapshot(`after releasing ${vm.name}`);
-    NodeAssert.equal(afterRelease.instances.length, 1, "Released VM still on LXD");
-    NodeAssert.deepEqual(afterRelease.volumes, [], "Released VM's disk still on LXD");
-
-    step("Archiving the Claude thread");
-    yield* dispatch("thread.archive", claude);
-    yield* waitMachines(claude, "no machines", (list) => list.length === 0);
-    yield* lxdEmpty("after archive");
-
-    // 7. A Codex thread creates one and releases it itself.
+    // 7. A Codex thread of the project uses Claude's machine, and releases only its own.
     const codex = ThreadId.make(NodeCrypto.randomUUID());
-    yield* watchMachines(codex, "codex");
     step(`Launching Codex (${CODEX_MODEL}) thread ${codex}`);
     yield* launch(
       codex,
@@ -514,8 +503,9 @@ try {
       CODEX_MODEL,
       [
         "This is a live test of T3 Code's machine tools. Use the T3 machine tools, not lxc or anything else.",
-        "Create one machine from the profile `box`, run `head -1 /etc/os-release` on it over ssh with the ssh command the tools give you, then release it with the machine tools.",
-        "Reply with the command's output and end with the line E2E_DONE.",
+        `1. Run \`hostname\` on the existing machine ${box.name} over ssh, with the ssh command the tools give you.`,
+        "2. Create one machine from the profile `box`, run `head -1 /etc/os-release` on it over ssh, and release it with the machine tools when you're done.",
+        "Reply with both outputs and end with the line E2E_DONE.",
       ].join("\n"),
     );
     const codexTurn = yield* runTurn(codex, "codex");
@@ -523,11 +513,23 @@ try {
     step(`  Codex replied:\n${codexReply.replace(/^/gm, "    | ")}`);
     NodeAssert.equal(codexTurn.runs.at(-1)?.status, "completed", "Codex's turn didn't complete");
     NodeAssert.ok(codexReply.includes("E2E_DONE"), "Codex didn't finish the task");
-    yield* waitMachines(codex, "Codex's machine released", (list) => list.length === 0, "1 minute");
-    yield* dispatch("thread.archive", codex);
-    yield* lxdEmpty("after Codex");
+    const afterCodex = yield* waitMachines(
+      "Claude's two machines and none of Codex's",
+      (list) => list.length === 2 && list.every((machine) => machine.threadId === claude),
+      "1 minute",
+    );
+    NodeAssert.equal(afterCodex.length, 2);
 
-    // 8. Nothing untracked; disconnecting removes T3 Code's certificate.
+    // 8. The user releases them from the panel, which any thread of the project shows.
+    for (const machine of [vm, box]) {
+      step(`Releasing ${machine.name} as the panel does`);
+      yield* client["machines.release"]({ projectId, name: machine.name });
+    }
+    yield* waitMachines("no machines", (list) => list.length === 0);
+    yield* lxdEmpty("after releasing");
+    yield* dispatch("thread.archive", codex);
+
+    // 9. Nothing untracked; disconnecting removes T3 Code's certificate.
     const finalInspection = yield* client["machines.inspectHosts"]({});
     step(`Untracked machines: ${finalInspection.untracked.length}`);
     NodeAssert.equal(finalInspection.untracked.length, 0);

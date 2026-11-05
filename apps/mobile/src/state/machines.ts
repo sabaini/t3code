@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { createMachineEnvironmentAtoms } from "@t3tools/client-runtime/state/machines";
-import type { EnvironmentId, MachineView, ServerSettings, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, MachineView, ProjectId, ServerSettings } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironmentQuery } from "./query";
@@ -13,16 +13,16 @@ const selectHasMachineHosts = (settings: ServerSettings | null | undefined) =>
   (settings?.machineHosts.length ?? 0) > 0;
 
 /** Subscribes only where an LXD server is connected, so other environments pay nothing. */
-export function useThreadMachines(
+export function useProjectMachines(
   environmentId: EnvironmentId,
-  threadId: ThreadId,
+  projectId: ProjectId,
 ): ReadonlyArray<MachineView> {
   const hasHosts = useAtomValue(
     serverEnvironment.settingsValueAtom(environmentId),
     selectHasMachineHosts,
   );
   const query = useEnvironmentQuery(
-    hasHosts ? machineEnvironment.thread({ environmentId, input: { threadId } }) : null,
+    hasHosts ? machineEnvironment.project({ environmentId, input: { projectId } }) : null,
   );
   return query.data?.machines ?? NO_MACHINES;
 }

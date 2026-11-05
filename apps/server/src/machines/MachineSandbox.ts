@@ -7,20 +7,20 @@ import type { MachineProfile } from "@t3tools/contracts";
 import type { LxdInstancesPost, LxdNetworkAclPut } from "./lxd/LxdClient.ts";
 
 /**
- * Machines run whatever agents put on them. Each thread's machines get an OVN
+ * Machines run whatever agents put on them. Each project's machines get an OVN
  * network of their own, where they reach each other and the public internet,
  * and nothing else: not the LAN, the tailnet, or the T3 host. That needs an LXD
  * project whose certificate can make such networks but can't hand out the host.
  */
 
-/** The ACL every thread's network uses. Its `@internal` means the machines on that network. */
+/** The ACL every project's network uses. Its `@internal` means the machines on that network. */
 export const MACHINE_NETWORK_ACL = "t3-machines";
 /** LXD's default `dns.domain`: machines reach each other as `<instance>.lxd`. */
 export const MACHINE_DNS_DOMAIN = "lxd";
 
 /** Two T3 environments may share an LXD project; each only ever touches its own machines. */
 const MACHINE_TAG_ENVIRONMENT = "user.t3.environment";
-const MACHINE_TAG_THREAD = "user.t3.thread";
+const MACHINE_TAG_PROJECT = "user.t3.project";
 const MACHINE_TAG_LEASE = "user.t3.lease";
 
 /** The tags of an instance this environment made, or undefined for any other instance. */
@@ -29,18 +29,18 @@ export const machineInstanceTags = (
   config: Readonly<Record<string, string>>,
 ) =>
   config[MACHINE_TAG_ENVIRONMENT] === environmentId
-    ? { threadId: config[MACHINE_TAG_THREAD], leaseId: config[MACHINE_TAG_LEASE] }
+    ? { projectId: config[MACHINE_TAG_PROJECT], leaseId: config[MACHINE_TAG_LEASE] }
     : undefined;
 
-const threadSuffix = (threadId: string) =>
-  NodeCrypto.createHash("sha256").update(threadId).digest("hex").slice(0, 8);
+const projectSuffix = (projectId: string) =>
+  NodeCrypto.createHash("sha256").update(projectId).digest("hex").slice(0, 8);
 
 /** LXD network names have at most 15 characters. */
-export const threadNetworkName = (threadId: string) => `t3m-${threadSuffix(threadId)}`;
+export const projectNetworkName = (projectId: string) => `t3m-${projectSuffix(projectId)}`;
 
-/** LXD names are per project, so each thread's machines carry a suffix of their own. */
-export const machineInstanceName = (threadId: string, name: string) =>
-  `${name}-${threadSuffix(threadId)}`;
+/** Every T3 project's machines share one LXD project, so each project's carry a suffix of their own. */
+export const machineInstanceName = (projectId: string, name: string) =>
+  `${name}-${projectSuffix(projectId)}`;
 
 /** Special-purpose IPv4 ranges machines never reach. */
 const BLOCKED_IPV4_RANGES: ReadonlyArray<readonly [address: string, prefix: number]> = [
@@ -100,8 +100,8 @@ export function machineNetworkAclRules(): LxdNetworkAclPut {
   };
 }
 
-/** What keeps a thread's network sandboxed. */
-export const THREAD_NETWORK_SECURITY: Readonly<Record<string, string>> = {
+/** What keeps a project's network sandboxed. */
+export const PROJECT_NETWORK_SECURITY: Readonly<Record<string, string>> = {
   // There's no IPv6 to filter.
   "ipv6.address": "none",
   "security.acls": MACHINE_NETWORK_ACL,
@@ -128,7 +128,7 @@ const HARMLESS_ALLOWS = new Set([
 ]);
 
 export interface ProjectSandbox {
-  /** The one OVN uplink the project may use, which thread networks use. */
+  /** The one OVN uplink the LXD project may use, which project networks use. */
   readonly uplink: string | undefined;
   /** Settings the project needs, as `key=value`. */
   readonly missing: ReadonlyArray<string>;
@@ -184,14 +184,14 @@ const machineVendorData = (name: string, publicKey: string) =>
 
 export const machineInstanceConfig = (input: {
   readonly environmentId: string;
-  readonly threadId: string;
+  readonly projectId: string;
   readonly leaseId: string;
   readonly name: string;
   readonly profile: MachineProfile;
   readonly publicKey: string;
 }): Readonly<Record<string, string>> => ({
   [MACHINE_TAG_ENVIRONMENT]: input.environmentId,
-  [MACHINE_TAG_THREAD]: input.threadId,
+  [MACHINE_TAG_PROJECT]: input.projectId,
   [MACHINE_TAG_LEASE]: input.leaseId,
   "cloud-init.vendor-data": machineVendorData(input.name, input.publicKey),
   "limits.cpu": String(input.profile.cpus),

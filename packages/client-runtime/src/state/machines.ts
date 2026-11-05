@@ -28,9 +28,9 @@ export function createMachineEnvironmentAtoms<R, E>(
   ) =>
     Effect.sync(() => registry.refresh(hosts({ environmentId: target.environmentId, input: {} })));
   return {
-    thread: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:machines:thread",
-      tag: WS_METHODS.machinesSubscribeThread,
+    project: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:machines:project",
+      tag: WS_METHODS.machinesSubscribeProject,
     }),
     hosts,
     release: createEnvironmentRpcCommand(runtime, {

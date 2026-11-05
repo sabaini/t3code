@@ -320,9 +320,9 @@ import {
   MachineHostInput,
   MachineHostsInspection,
   MachineReleaseInput,
+  MachineProjectInput,
+  MachineProjectState,
   MachineRpcError,
-  MachineThreadInput,
-  MachineThreadState,
   UntrackedMachineInput,
 } from "./machines.ts";
 import {
@@ -517,7 +517,7 @@ export const WS_METHODS = {
   deviceDetail: "device.detail",
   deviceAction: "device.action",
 
-  machinesSubscribeThread: "machines.subscribeThread",
+  machinesSubscribeProject: "machines.subscribeProject",
   machinesRelease: "machines.release",
   machinesInspectHosts: "machines.inspectHosts",
   machinesConnectHost: "machines.connectHost",
@@ -1821,9 +1821,9 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
 
 const MachineFailure = Schema.Union([MachineRpcError, EnvironmentAuthorizationError]);
 
-const WsMachinesSubscribeThreadRpc = Rpc.make(WS_METHODS.machinesSubscribeThread, {
-  payload: MachineThreadInput,
-  success: MachineThreadState,
+const WsMachinesSubscribeProjectRpc = Rpc.make(WS_METHODS.machinesSubscribeProject, {
+  payload: MachineProjectInput,
+  success: MachineProjectState,
   error: MachineFailure,
   stream: true,
 });
@@ -2352,7 +2352,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
-  WsMachinesSubscribeThreadRpc,
+  WsMachinesSubscribeProjectRpc,
   WsMachinesReleaseRpc,
   WsMachinesInspectHostsRpc,
   WsMachinesConnectHostRpc,

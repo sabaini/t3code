@@ -4,6 +4,7 @@ Some work shouldn't run on your own computer: installing system packages, runnin
 reproducing a bug on a clean system, or testing across several hosts. **Machines** lets agents
 create disposable virtual machines and containers on LXD servers of yours for that. An agent
 creates one when it needs it, runs commands on it over `ssh`, and releases it when it's done.
+Machines belong to a project, so the project's other threads can use them too.
 
 You set this up once per environment:
 
@@ -60,9 +61,9 @@ so make a new one for each environment you connect.
 **Disconnect** forgets the server and removes T3 Code's certificate there. Machines on it stay.
 Connect the same server and project again to use or release them.
 
-With more than one server, a thread's first machine goes to the server with the fewest machines
-among those that can take it. The thread's later machines go to the same server, because a
-thread's machines share a network that lives on one server.
+With more than one server, a project's first machine goes to the server with the fewest machines
+among those that can take it. The project's later machines go to the same server, because a
+project's machines share a network that lives on one server.
 
 ## Machine profiles
 
@@ -80,7 +81,7 @@ select a project to give it its own.
 | **LXD profiles**         | The profiles on the LXD server that machines are made with, `default` to start with. The root disk comes from them.              |
 
 Changes apply to machines created afterwards. An LXD profile that adds another network device is
-refused, since it could connect machines to more than their thread's network.
+refused, since it could connect machines to more than their project's network.
 
 ## Let agents use machines
 
@@ -89,36 +90,41 @@ when a thread's agent session next starts. Then ask in plain words, like "Make t
 test the cluster setup on them". The agent lists the profiles, creates machines, and runs commands
 with the `ssh -F …` command T3 Code gives it. Machines log in as `ubuntu`, with passwordless sudo.
 
-A thread has at most 5 machines. The first virtual machine from an image takes a few minutes while
-the LXD server downloads it.
+A project has at most 5 machines, whichever threads made them. The first virtual machine from an
+image takes a few minutes while the LXD server downloads it.
+
+An agent can use a machine another thread of the project made, for example a test cluster you had
+one thread set up. Agents are told to release the machines they made once they're done, unless you
+want to keep them, and to leave another thread's machines alone unless you ask.
 
 Codex outside **Full access** runs `ssh` in a sandbox that can't reach machines. It reruns `ssh`
 outside the sandbox where its permission mode allows that, or asks you to switch the thread to
 Full access. Cursor needs Full access to reach machines. See
 [permission modes](./permission-modes.md).
 
-## See a thread's machines
+## See a project's machines
 
-On web and desktop, a thread's machines show in its details panel under **Machines**, with their
-state and how long they have left. From there you can open a terminal on one, copy its `ssh`
-command, or **Release** it. On mobile, a server button above the composer opens the same list,
-where you can release them.
+On web and desktop, every thread's details panel shows its project's machines under **Machines**,
+with their state and how long they have left. From there you can open a terminal on one, copy its
+`ssh` command, or **Release** it. On mobile, a server button above the composer opens the same
+list, where you can release them.
 
 ## What machines can reach
 
-A thread's machines share a network where they reach each other and the public internet, and
-nothing else: not your local network, the T3 Code server, or other threads' machines. They know
-each other by a longer name than the one you `ssh` to, like `node-1-3f9a2c1b.lxd`.
+A project's machines share a network where they reach each other and the public internet, and
+nothing else: not your local network, the T3 Code server, or other projects' machines. They know
+each other by a longer name than the one you `ssh` to, like `node-1-3f9a2c1b.lxd`. Threads of one
+project aren't kept apart: any of them can use or release the project's machines.
 
 ## When machines stop and go away
 
-- **They stop** when the thread settles, or after 4 hours without a turn or an `ssh` connection.
-  The next `ssh` starts them again.
-- **They're deleted**, with their disks, when their profile's lifetime is up, when the agent or you
-  release them, or when the thread is archived or deleted.
+- **They stop** after 4 hours without an `ssh` connection or an agent checking on them. The next
+  `ssh` starts them again.
+- **They're deleted**, with their disks, when their profile's lifetime is up, when an agent or you
+  release them, or when their project is deleted. Archiving or deleting a thread leaves them.
 
-If a thread is gone but its machines aren't, for example after this environment's data was reset,
-Settings lists them under **Machines without a thread**. T3 Code never deletes those by itself;
+If a project is gone but its machines aren't, for example after this environment's data was reset,
+Settings lists them under **Machines without a project**. T3 Code never deletes those by itself;
 select **Delete** for each one you don't need.
 
 ## When something's wrong

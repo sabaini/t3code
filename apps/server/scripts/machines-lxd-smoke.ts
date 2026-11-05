@@ -10,20 +10,18 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, MachineProfile, ProjectId, ThreadId } from "@t3tools/contracts";
+import * as MachineHosts from "../src/machines/MachineHosts.ts";
+import * as MachineLeaseStore from "../src/machines/MachineLeaseStore.ts";
+import * as MachineService from "../src/machines/MachineService.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../src/config.ts";
 import * as ServerEnvironment from "../src/environment/ServerEnvironment.ts";
-import * as MachineHosts from "../src/machines/MachineHosts.ts";
-import * as MachineLeaseStore from "../src/machines/MachineLeaseStore.ts";
-import * as MachineService from "../src/machines/MachineService.ts";
-import * as MachineThreads from "../src/machines/MachineThreads.ts";
+import * as ServerMachinePlatform from "../src/machines/ServerMachinePlatform.ts";
 import * as ProcessRunner from "../src/processRunner.ts";
 import * as Settings from "../src/serverSettings.ts";
 
@@ -33,7 +31,10 @@ if (tokenFile === undefined) {
   process.exit(2);
 }
 
-const THREAD = ThreadId.make(`smoke-${Date.now()}`);
+const PROJECT = ProjectId.make(`smoke-${Date.now()}`);
+const OTHER_PROJECT = ProjectId.make(`smoke-other-${Date.now()}`);
+const THREAD = ThreadId.make("smoke-thread");
+const OTHER_THREAD = ThreadId.make("smoke-other-thread");
 const decodeProfile = Schema.decodeSync(MachineProfile);
 const profiles = [
   decodeProfile({ name: "box", image: "ubuntu:24.04", type: "container", cpus: 1, memoryGiB: 1 }),
@@ -78,6 +79,7 @@ const program = Effect.gen(function* () {
   try {
     const started = Date.now();
     const box = yield* machines.acquire({
+      projectId: PROJECT,
       threadId: THREAD,
       profile: "box",
       waitFor: "10 minutes",
@@ -86,7 +88,7 @@ const program = Effect.gen(function* () {
       `box: ${box.state} after ${Math.round((Date.now() - started) / 1000)}s`,
       box.error ?? "",
     );
-    const configPath = machines.sshConfigPath(THREAD);
+    const configPath = machines.sshConfigPath(PROJECT);
     yield* ssh(configPath, box.name, "hostname; uname -r; ip -4 -br addr show eth0");
     // The sandbox: the public internet is reachable, the LAN and the LXD host aren't.
     const internet = yield* ssh(
@@ -104,63 +106,68 @@ const program = Effect.gen(function* () {
     if (!lan.includes("blocked")) throw new Error("A machine reached the LAN");
 
     const vmStarted = Date.now();
-    const vm = yield* machines.acquire({ threadId: THREAD, profile: "vm", waitFor: "10 minutes" });
+    // Another thread of the project gets a machine on the same network.
+    const vm = yield* machines.acquire({
+      projectId: PROJECT,
+      threadId: OTHER_THREAD,
+      profile: "vm",
+      waitFor: "10 minutes",
+    });
     console.log(
       `vm: ${vm.state} after ${Math.round((Date.now() - vmStarted) / 1000)}s`,
       vm.error ?? "",
     );
     const disks = yield* ssh(configPath, vm.name, "lsblk -dno NAME,SIZE,TYPE");
     if (!/3G/.test(disks)) throw new Error("The VM's extra disk is missing");
-    // Machines of one thread reach each other by DNS name.
+    // Machines of one project reach each other by DNS name.
     yield* ssh(configPath, vm.name, `ping -c1 -W5 ${box.dnsName} | head -2`);
 
-    // Settling stops the thread's machines; ssh starts one again.
-    thread.settled = true;
-    yield* machines.reconcileThread(THREAD);
-    console.log(
-      (yield* machines.list(THREAD)).map((machine) => `${machine.name}: ${machine.state}`),
+    // Another project's machine can't reach them.
+    const other = yield* machines.acquire({
+      projectId: OTHER_PROJECT,
+      threadId: THREAD,
+      profile: "box",
+      waitFor: "10 minutes",
+    });
+    const boxAddress = (yield* machines.list(PROJECT)).find((machine) => machine.name === box.name)
+      ?.addresses[0];
+    const crossed = yield* ssh(
+      machines.sshConfigPath(OTHER_PROJECT),
+      other.name,
+      `ping -c1 -W3 ${boxAddress} >/dev/null && echo reached || echo blocked`,
     );
-    thread.settled = false;
+    if (!crossed.includes("blocked")) throw new Error("A machine reached another project's");
+
+    // ssh starts a stopped machine again.
+    const [entry] = yield* hosts.connected;
+    yield* entry!.lxd.setInstanceState(vm.dnsName.replace(/\.lxd$/, ""), "stop");
+    console.log(
+      (yield* machines.list(PROJECT)).map((machine) => `${machine.name}: ${machine.state}`),
+    );
     const wakeStarted = Date.now();
     yield* ssh(configPath, vm.name, "uptime");
     console.log(`vm woke for ssh in ${Math.round((Date.now() - wakeStarted) / 1000)}s`);
     console.log(
-      (yield* machines.list(THREAD)).map((machine) => `${machine.name}: ${machine.state}`),
+      (yield* machines.list(PROJECT)).map((machine) => `${machine.name}: ${machine.state}`),
     );
   } finally {
-    for (const machine of yield* machines.list(THREAD).pipe(Effect.orElseSucceed(() => []))) {
-      yield* machines.release({ threadId: THREAD, name: machine.name });
-      console.log(`released ${machine.name}`);
+    for (const projectId of [PROJECT, OTHER_PROJECT]) {
+      for (const machine of yield* machines.list(projectId).pipe(Effect.orElseSucceed(() => []))) {
+        yield* machines.release({ projectId, name: machine.name });
+        console.log(`released ${machine.name}`);
+      }
     }
     console.log(yield* hosts.disconnect(host.id));
   }
 });
 
-const thread = { settled: false };
-const threadsLayer = Layer.succeed(
-  MachineThreads.MachineThreads,
-  MachineThreads.MachineThreads.of({
-    get: Effect.fn("MachineThreads.MachineThreads.get")(() =>
-      Effect.sync(() =>
-        Option.some({
-          projectId: ProjectId.make("smoke"),
-          archived: false,
-          settled: thread.settled,
-          running: !thread.settled,
-          lastTurnAt: Date.now(),
-        }),
-      ),
-    ),
-    lifecycleChanges: Stream.never,
-  }),
-);
-
+// No sweep runs here, so the platform never asks whether the smoke projects exist.
 const layer = MachineService.layer.pipe(
   Layer.provideMerge(MachineHosts.layer),
+  Layer.provide(Layer.mergeAll(MachineLeaseStore.layer, ServerMachinePlatform.layer)),
   Layer.provide(
     Layer.mergeAll(
-      MachineLeaseStore.layer.pipe(Layer.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
-      threadsLayer,
+      NodeSqliteClient.layer({ filename: ":memory:" }),
       Layer.succeed(
         ServerEnvironment.ServerEnvironment,
         ServerEnvironment.ServerEnvironment.of({

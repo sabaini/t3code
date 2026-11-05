@@ -5,7 +5,7 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import * as ProcessRunner from "../../processRunner.ts";
+import { MachinePlatform } from "../MachinePlatform.ts";
 import { makeLxdClient } from "./LxdClient.ts";
 import { certificateFingerprint, probeServerCertificate } from "./LxdTls.ts";
 
@@ -103,36 +103,33 @@ export const createLxdClientCredentials = Effect.fn("LxdTrust.createClientCreden
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const runner = yield* ProcessRunner.ProcessRunner;
+  const platform = yield* MachinePlatform;
   const directory = yield* fs
     .makeTempDirectoryScoped({ prefix: "t3-lxd-" })
     .pipe(Effect.mapError((cause) => new LxdCredentialsError({ cause })));
   const certificatePath = path.join(directory, "client.crt");
   const keyPath = path.join(directory, "client.key");
-  const result = yield* runner
-    .run({
-      command: "openssl",
-      args: [
-        "req",
-        "-x509",
-        "-newkey",
-        "ec",
-        "-pkeyopt",
-        "ec_paramgen_curve:secp384r1",
-        "-sha384",
-        "-nodes",
-        "-days",
-        "3650",
-        "-subj",
-        `/CN=${commonName}`,
-        "-addext",
-        "extendedKeyUsage=clientAuth",
-        "-keyout",
-        keyPath,
-        "-out",
-        certificatePath,
-      ],
-    })
+  const result = yield* platform
+    .run("openssl", [
+      "req",
+      "-x509",
+      "-newkey",
+      "ec",
+      "-pkeyopt",
+      "ec_paramgen_curve:secp384r1",
+      "-sha384",
+      "-nodes",
+      "-days",
+      "3650",
+      "-subj",
+      `/CN=${commonName}`,
+      "-addext",
+      "extendedKeyUsage=clientAuth",
+      "-keyout",
+      keyPath,
+      "-out",
+      certificatePath,
+    ])
     .pipe(Effect.mapError((cause) => new LxdCredentialsError({ cause })));
   if (result.code !== 0) {
     return yield* new LxdCredentialsError({ cause: new Error(result.stderr.slice(0, 500)) });

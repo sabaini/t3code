@@ -7,7 +7,7 @@ import {
   machineStateLabel,
 } from "@t3tools/client-runtime/state/machines";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, MachineView, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, MachineView, ProjectId } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
 import { useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
@@ -18,16 +18,17 @@ import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SheetHeader } from "../../components/ui/SheetHeader";
-import { machineEnvironment, useThreadMachines } from "../../state/machines";
+import { machineEnvironment, useProjectMachines } from "../../state/machines";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-type MachinesTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
+/** Opened from a thread; machines belong to its project. */
+type MachinesTarget = { readonly environmentId: EnvironmentId; readonly projectId: ProjectId };
 
 export function ThreadMachinesSheet({ route }: StaticScreenProps<MachinesTarget>) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { environmentId, threadId } = route.params;
-  const machines = useThreadMachines(environmentId, threadId);
+  const { environmentId, projectId } = route.params;
+  const machines = useProjectMachines(environmentId, projectId);
   const canRelease = useAtomValue(machineEnvironment.release.permissionAtom(environmentId));
   const release = useAtomCommand(machineEnvironment.release, { reportFailure: false });
   const [releasing, setReleasing] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export function ThreadMachinesSheet({ route }: StaticScreenProps<MachinesTarget>
     Dialog.confirm({
       title: `Release ${machine.name}?`,
       message:
-        "The machine is deleted with its disks, and anything on it is lost. If the agent is still using it, its commands there fail.",
+        "The machine is deleted with its disks, and anything on it is lost. If an agent in any of this project's threads is still using it, its commands there fail.",
       confirmText: "Release",
       destructive: true,
       onConfirm: () => {
@@ -47,7 +48,7 @@ export function ThreadMachinesSheet({ route }: StaticScreenProps<MachinesTarget>
           setReleasing(machine.name);
           const result = await release({
             environmentId,
-            input: { threadId, name: machine.name },
+            input: { projectId, name: machine.name },
           });
           setReleasing(null);
           if (result._tag === "Failure") {
@@ -72,7 +73,7 @@ export function ThreadMachinesSheet({ route }: StaticScreenProps<MachinesTarget>
     >
       {machines.length === 0 ? (
         <Text className="pt-6 text-center text-sm text-foreground-muted">
-          This thread has no machines.
+          This project has no machines.
         </Text>
       ) : (
         machines.map((machine) => (

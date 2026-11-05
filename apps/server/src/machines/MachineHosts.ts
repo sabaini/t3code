@@ -12,10 +12,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
-import * as Settings from "../serverSettings.ts";
 import { type LxdClient, type LxdError, makeLxdClient } from "./lxd/LxdClient.ts";
 import { certificateFingerprint } from "./lxd/LxdTls.ts";
-import * as ProcessRunner from "../processRunner.ts";
 import {
   createLxdClientCredentials,
   joinLxdServer,
@@ -24,6 +22,7 @@ import {
   type LxdTrustTokenError,
   parseLxdTrustToken,
 } from "./lxd/LxdTrust.ts";
+import { MachinePlatform } from "./MachinePlatform.ts";
 import { lxdVersionSupported, projectSandbox, type ProjectSandbox } from "./MachineSandbox.ts";
 
 export class MachineHostNotFoundError extends Schema.TaggedError<MachineHostNotFoundError>()(
@@ -104,13 +103,13 @@ const connect = Effect.fn("MachineHosts.connect")(function* (input: {
   readonly trustToken: string;
   readonly label?: string | undefined;
 }) {
-  const settings = yield* Settings.ServerSettingsService;
+  const platform = yield* MachinePlatform;
   const token = yield* parseLxdTrustToken(input.trustToken);
   const credentials = yield* createLxdClientCredentials("t3-code");
   const joined = yield* joinLxdServer(token, credentials);
   const id = machineHostId(joined.serverCertificate, joined.project);
-  const current = yield* settings.getSettings;
-  if (current.machineHosts.some((host) => host.id === id)) {
+  const current = yield* platform.hosts;
+  if (current.some((host) => host.id === id)) {
     return yield* new MachineHostAlreadyConnectedError({ hostId: id, project: joined.project });
   }
   const host: MachineHostConfig = {
@@ -122,7 +121,7 @@ const connect = Effect.fn("MachineHosts.connect")(function* (input: {
     clientCertificate: credentials.certificate,
     clientKey: credentials.key,
   };
-  yield* settings.updateSettings({ machineHosts: [...current.machineHosts, host] });
+  yield* platform.setHosts([...current, host]);
   return host;
 });
 
@@ -134,10 +133,8 @@ const identityOf = (host: MachineHostConfig) => ({
 });
 
 const make = Effect.gen(function* () {
-  const settings = yield* Settings.ServerSettingsService;
-  const context = yield* Effect.context<
-    Settings.ServerSettingsService | ProcessRunner.ProcessRunner | FileSystem.FileSystem | Path.Path
-  >();
+  const platform = yield* MachinePlatform;
+  const context = yield* Effect.context<MachinePlatform | FileSystem.FileSystem | Path.Path>();
   const layerScope = yield* Effect.scope;
   const lock = yield* Semaphore.make(1);
   // One client per host keeps its TLS connections alive between requests.
@@ -160,15 +157,13 @@ const make = Effect.gen(function* () {
   }, lock.withPermits(1));
 
   const findHost = Effect.fn("MachineHosts.findHost")(function* (hostId: string) {
-    const host = (yield* settings.getSettings).machineHosts.find((entry) => entry.id === hostId);
+    const host = (yield* platform.hosts).find((entry) => entry.id === hostId);
     if (!host) return yield* new MachineHostNotFoundError({ hostId });
     return host;
   });
 
   const connected = Effect.gen(function* () {
-    const hosts = (yield* settings.getSettings).machineHosts.filter(
-      (host) => host.clientKey !== "",
-    );
+    const hosts = (yield* platform.hosts).filter((host) => host.clientKey !== "");
     return yield* Effect.forEach(hosts, (host) =>
       clientFor(host).pipe(Effect.map((lxd) => ({ host, lxd }))),
     );
@@ -182,10 +177,8 @@ const make = Effect.gen(function* () {
       Effect.as(true),
       Effect.orElseSucceed(() => false),
     );
-    const current = yield* settings.getSettings;
-    yield* settings.updateSettings({
-      machineHosts: current.machineHosts.filter((entry) => entry.id !== hostId),
-    });
+    const current = yield* platform.hosts;
+    yield* platform.setHosts(current.filter((entry) => entry.id !== hostId));
     const cached = clients.get(hostId);
     clients.delete(hostId);
     if (cached) yield* Scope.close(cached.scope, Exit.void);

@@ -17,8 +17,9 @@ export type MachineLeaseStatus = typeof MachineLeaseStatus.Type;
 
 export const MachineLease = Schema.Struct({
   leaseId: Schema.String,
-  threadId: ThreadId,
   projectId: ProjectId,
+  /** The thread whose agent acquired it. Any thread of the project may use or release it. */
+  threadId: ThreadId,
   name: Schema.String,
   hostId: Schema.String,
   instance: Schema.String,
@@ -30,11 +31,11 @@ export const MachineLease = Schema.Struct({
   volumes: Schema.Array(Schema.String),
   status: MachineLeaseStatus,
   error: Schema.NullOr(Schema.String),
-  /** `type base64` lines for the thread's known_hosts. */
+  /** `type base64` lines for the project's known_hosts. */
   hostKeys: Schema.Array(Schema.String),
   createdAt: Schema.Number,
   expiresAt: Schema.Number,
-  /** Last turn or SSH connection; idle machines are stopped. */
+  /** Last SSH connection or machine tool call; idle machines are stopped. */
   lastUsedAt: Schema.Number,
 });
 export type MachineLease = typeof MachineLease.Type;
@@ -92,16 +93,13 @@ export class MachineLeaseStore extends Context.Service<
   MachineLeaseStore,
   {
     readonly list: Effect.Effect<ReadonlyArray<MachineLease>, MachineLeaseStoreError>;
-    readonly listForThread: (
-      threadId: ThreadId,
+    readonly listForProject: (
+      projectId: ProjectId,
     ) => Effect.Effect<ReadonlyArray<MachineLease>, MachineLeaseStoreError>;
     /** Inserts or replaces the lease by id. */
     readonly save: (lease: MachineLease) => Effect.Effect<void, MachineLeaseStoreError>;
     readonly remove: (leaseId: string) => Effect.Effect<void, MachineLeaseStoreError>;
-    readonly touchThread: (
-      threadId: ThreadId,
-      at: number,
-    ) => Effect.Effect<void, MachineLeaseStoreError>;
+    readonly touch: (leaseId: string, at: number) => Effect.Effect<void, MachineLeaseStoreError>;
   }
 >()("t3/machines/MachineLeaseStore") {}
 
@@ -109,8 +107,10 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   // Not a numbered migration: this fork's ids would collide with upstream's next
   // one, and the migrator skips ids at or below the latest applied.
+  // Leases from when threads owned machines are dropped; their instances show as untracked.
+  yield* sql`DROP TABLE IF EXISTS machine_leases`;
   yield* sql`
-    CREATE TABLE IF NOT EXISTS machine_leases (
+    CREATE TABLE IF NOT EXISTS machine_project_leases (
       lease_id TEXT PRIMARY KEY,
       thread_id TEXT NOT NULL,
       project_id TEXT NOT NULL,
@@ -127,10 +127,9 @@ const make = Effect.gen(function* () {
       created_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL,
       last_used_at INTEGER NOT NULL,
-      UNIQUE (thread_id, name)
+      UNIQUE (project_id, name)
     )
   `;
-  yield* sql`CREATE INDEX IF NOT EXISTS machine_leases_thread ON machine_leases(thread_id)`;
 
   const failed = (operation: string) => (cause: unknown) =>
     new MachineLeaseStoreError({ operation, cause });
@@ -146,16 +145,16 @@ const make = Effect.gen(function* () {
     );
 
   return MachineLeaseStore.of({
-    list: select(sql`SELECT * FROM machine_leases ORDER BY created_at`, "list leases"),
-    listForThread: Effect.fn("MachineLeaseStore.listForThread")((threadId: ThreadId) =>
+    list: select(sql`SELECT * FROM machine_project_leases ORDER BY created_at`, "list leases"),
+    listForProject: Effect.fn("MachineLeaseStore.listForProject")((projectId: ProjectId) =>
       select(
-        sql`SELECT * FROM machine_leases WHERE thread_id = ${threadId} ORDER BY created_at`,
-        "list a thread's leases",
+        sql`SELECT * FROM machine_project_leases WHERE project_id = ${projectId} ORDER BY created_at`,
+        "list a project's leases",
       ),
     ),
     save: Effect.fn("MachineLeaseStore.save")((lease: MachineLease) =>
       sql`
-        INSERT INTO machine_leases (
+        INSERT INTO machine_project_leases (
           lease_id, thread_id, project_id, name, host_id, instance, network, profile_json,
           storage_pool, volumes_json, status, error, host_keys_json, created_at, expires_at,
           last_used_at
@@ -176,14 +175,15 @@ const make = Effect.gen(function* () {
       `.pipe(Effect.asVoid, Effect.mapError(failed("save a lease"))),
     ),
     remove: Effect.fn("MachineLeaseStore.remove")((leaseId: string) =>
-      sql`DELETE FROM machine_leases WHERE lease_id = ${leaseId}`.pipe(
+      sql`DELETE FROM machine_project_leases WHERE lease_id = ${leaseId}`.pipe(
         Effect.asVoid,
         Effect.mapError(failed("remove a lease")),
       ),
     ),
-    touchThread: Effect.fn("MachineLeaseStore.touchThread")((threadId: ThreadId, at: number) =>
+    touch: Effect.fn("MachineLeaseStore.touch")((leaseId: string, at: number) =>
       sql`
-        UPDATE machine_leases SET last_used_at = MAX(last_used_at, ${at}) WHERE thread_id = ${threadId}
+        UPDATE machine_project_leases SET last_used_at = MAX(last_used_at, ${at})
+        WHERE lease_id = ${leaseId}
       `.pipe(Effect.asVoid, Effect.mapError(failed("record machine use"))),
     ),
   });
