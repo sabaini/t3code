@@ -61,6 +61,7 @@ import {
   MachineSshError,
   relaySshConnection,
   serveRelaySocket,
+  shellWord,
   writeMachineSshProxy,
 } from "./MachineSsh.ts";
 
@@ -279,6 +280,7 @@ const make = Effect.gen(function* () {
   const projectLock = yield* KeyedLock.make<ProjectId>();
   const aclLock = yield* KeyedLock.make<string>();
   const sshLock = yield* KeyedLock.make<ProjectId>();
+  const wakeLock = yield* KeyedLock.make<string>();
   const sweepLock = yield* Semaphore.make(1);
   const keyLock = yield* Semaphore.make(1);
   /** Creating or booting a machine, by lease id. */
@@ -723,15 +725,31 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /** Starts a ready machine that's stopped and watches it boot. */
-  const wake = Effect.fn("MachineService.wake")(function* (lease: MachineLease) {
-    if (lease.status !== "ready" || (yield* FiberMap.has(tasks, lease.leaseId))) return;
-    const { lxd } = yield* connectedHostOf(lease);
-    const instance = yield* lxd.instance(lease.instance);
-    if (Option.isNone(instance) || instance.value.status !== "Stopped") return;
-    yield* lxd.setInstanceState(lease.instance, "start");
-    const starting = yield* updateLease(lease, (current) => ({ ...current, status: "starting" }));
-    if (Option.isSome(starting)) yield* startTask(starting.value, becomeReady(starting.value, lxd));
+  /**
+   * Starts a ready machine that's stopped and watches it boot. One at a time per machine, so
+   * parallel connections start it once and the rest find its boot task.
+   */
+  const wake = Effect.fn("MachineService.wake")(function* (initial: MachineLease) {
+    yield* wakeLock.withLock(
+      initial.leaseId,
+      Effect.gen(function* () {
+        const lease = (yield* leasesOf(initial.projectId)).find(
+          (candidate) => candidate.leaseId === initial.leaseId,
+        );
+        if (lease?.status !== "ready" || (yield* FiberMap.has(tasks, lease.leaseId))) return;
+        const { lxd } = yield* connectedHostOf(lease);
+        const instance = yield* lxd.instance(lease.instance);
+        if (Option.isNone(instance) || instance.value.status !== "Stopped") return;
+        yield* lxd.setInstanceState(lease.instance, "start");
+        const starting = yield* updateLease(lease, (current) => ({
+          ...current,
+          status: "starting",
+        }));
+        if (Option.isSome(starting)) {
+          yield* startTask(starting.value, becomeReady(starting.value, lxd));
+        }
+      }),
+    );
   });
 
   const viewOf = (
@@ -752,7 +770,7 @@ const make = Effect.gen(function* () {
     dnsName: `${lease.instance}.${MACHINE_DNS_DOMAIN}`,
     addresses,
     expiresAt: DateTime.formatIso(DateTime.makeUnsafe(lease.expiresAt)),
-    sshCommand: `ssh -F ${sshConfigPath(lease.projectId)} ${lease.name}`,
+    sshCommand: `ssh -F ${shellWord(sshConfigPath(lease.projectId))} ${lease.name}`,
     threadId: lease.threadId,
     ...(lease.error === null ? {} : { error: lease.error }),
   });
@@ -846,13 +864,14 @@ const make = Effect.gen(function* () {
         yield* aclLock.withLock(placed.entry.host.id, applyNetworkAcl(placed.entry));
         yield* ensureProjectNetwork(placed.entry, projectId, placed.uplink);
         const createdAt = yield* now;
+        const leaseId = NodeCrypto.randomUUID();
         const lease: MachineLease = {
-          leaseId: NodeCrypto.randomUUID(),
+          leaseId,
           projectId,
           threadId: input.threadId,
           name,
           hostId: placed.entry.host.id,
-          instance: machineInstanceName(projectId, name),
+          instance: machineInstanceName(leaseId, name),
           network: projectNetworkName(projectId),
           profile,
           storagePool: null,
@@ -886,7 +905,7 @@ const make = Effect.gen(function* () {
     return yield* viewByName(input.projectId, input.name);
   });
 
-  /** Deletes the instance and its disks. Both already being gone is fine. */
+  /** Deletes the instance and its disks, and says whether the instance existed. Both already being gone is fine. */
   const destroy = Effect.fn("MachineService.destroy")(function* (
     entry: ConnectedHost,
     lease: MachineLease,
@@ -901,6 +920,7 @@ const make = Effect.gen(function* () {
     if (lease.storagePool !== null) {
       for (const volume of lease.volumes) yield* entry.lxd.deleteVolume(lease.storagePool, volume);
     }
+    return Option.isSome(instance);
   });
 
   /**
@@ -914,7 +934,13 @@ const make = Effect.gen(function* () {
     yield* syncProjectSsh(lease.projectId);
     const entry = hostOf(yield* hosts.connected, lease);
     if (!entry) return;
-    yield* destroy(entry, lease);
+    const existed = yield* destroy(entry, lease);
+    // LXD finishes a creation it accepted though T3 stopped waiting, and lists the instance only
+    // once it has its image. The lease stays releasing meanwhile, so a sweep deletes what appears.
+    const mayStillAppear =
+      (lease.status === "creating" || lease.status === "releasing") &&
+      (yield* now) - lease.createdAt < Duration.toMillis(BOOT_TIMEOUT);
+    if (!existed && mayStillAppear) return;
     yield* projectLock.withLock(lease.projectId, store.remove(lease.leaseId));
     yield* notify(lease.projectId);
     yield* removeUnusedNetwork(entry, lease.projectId);

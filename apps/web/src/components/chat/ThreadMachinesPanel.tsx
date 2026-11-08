@@ -126,7 +126,7 @@ export function ThreadMachinesPanel(props: {
                 aria-label="Machine settings"
                 onClick={() =>
                   void navigate({
-                    to: "/settings/integrations",
+                    to: "/settings/devices",
                     search: { machine: props.environmentId },
                     hash: "machines",
                     hashScrollIntoView: false,

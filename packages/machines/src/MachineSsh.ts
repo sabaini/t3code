@@ -78,6 +78,10 @@ export const writeMachineSshProxy = Effect.fn("MachineSsh.writeProxy")(function*
 
 const quote = (value: string) => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 
+/** One POSIX shell word: plain paths stay readable, and others, such as one with a space, are quoted. */
+export const shellWord = (value: string) =>
+  /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
+
 /**
  * Offers machines only their key: sshd gives up after six it doesn't know,
  * and the user's agent may hold more. Host keys are pinned per machine.

@@ -8,6 +8,8 @@ import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { type WebSocket, WebSocketServer } from "ws";
 
 import { makeLxdClient } from "./LxdClient.ts";
 
@@ -42,10 +44,14 @@ const selfSigned = Effect.acquireRelease(
   }),
 );
 
-/** Answers requests from `routes` by "METHOD path", in order, and records them. */
+/**
+ * Answers requests from `routes` by "METHOD path", in order, and records them. WebSocket upgrades
+ * go to `onWebSocket` with the `secret` they carry.
+ */
 const fakeLxd = (
   tls: { readonly certificate: string; readonly key: string },
   routes: Record<string, Array<{ readonly status: number; readonly body: unknown }>>,
+  onWebSocket?: (secret: string, socket: WebSocket) => void,
 ) =>
   Effect.acquireRelease(
     Effect.callback<{ readonly server: NodeHttps.Server; readonly seen: Array<string> }>(
@@ -61,10 +67,18 @@ const fakeLxd = (
             response.end(JSON.stringify(reply.body));
           },
         );
+        new WebSocketServer({ server }).on("connection", (socket, request) => {
+          const secret = new URL(request.url ?? "", "https://lxd").searchParams.get("secret");
+          onWebSocket?.(secret ?? "", socket);
+        });
         server.listen(0, "127.0.0.1", () => resume(Effect.succeed({ server, seen })));
       },
     ),
-    ({ server }) => Effect.callback<void>((resume) => void server.close(() => resume(Effect.void))),
+    ({ server }) =>
+      Effect.callback<void>((resume) => {
+        server.closeAllConnections();
+        server.close(() => resume(Effect.void));
+      }),
   );
 
 describe("LxdClient", () => {
@@ -105,6 +119,45 @@ describe("LxdClient", () => {
         `GET ${operation}/wait`,
         `GET ${operation}/wait`,
       ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps output the command writes as soon as its streams are connected", () =>
+    Effect.gen(function* () {
+      const tls = yield* selfSigned;
+      const operation = "/1.0/operations/exec-1";
+      const fds = { control: "control", "0": "stdin", "1": "stdout", "2": "stderr" };
+      const sockets = new Map<string, WebSocket>();
+      const lxd = yield* fakeLxd(
+        tls,
+        {
+          "POST /1.0/instances/box/exec": [
+            { status: 202, body: { type: "async", operation, metadata: { metadata: { fds } } } },
+          ],
+        },
+        (secret, socket) => {
+          sockets.set(secret, socket);
+          if (sockets.size < 4) return;
+          // sshd's banner, sent the moment LXD starts the command.
+          sockets.get("stdout")!.send(new TextEncoder().encode("SSH-2.0-OpenSSH_9.6\r\n"));
+          sockets.get("stdout")!.close();
+          sockets.get("stderr")!.close();
+        },
+      );
+      const { port } = lxd.server.address() as NodeNet.AddressInfo;
+      const client = yield* makeLxdClient(
+        {
+          address: `127.0.0.1:${port}`,
+          serverCertificate: tls.certificate,
+          clientCertificate: tls.certificate,
+          clientKey: tls.key,
+        },
+        "t3-machines",
+      );
+
+      const exec = yield* client.exec("box", ["nc", "-q0", "127.0.0.1", "22"]);
+      const output = yield* Stream.mkString(Stream.decodeText(exec.stdout));
+      assert.strictEqual(output, "SSH-2.0-OpenSSH_9.6\r\n");
     }).pipe(Effect.scoped),
   );
 });
