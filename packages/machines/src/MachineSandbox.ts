@@ -32,15 +32,18 @@ export const machineInstanceTags = (
     ? { projectId: config[MACHINE_TAG_PROJECT], leaseId: config[MACHINE_TAG_LEASE] }
     : undefined;
 
-const projectSuffix = (projectId: string) =>
-  NodeCrypto.createHash("sha256").update(projectId).digest("hex").slice(0, 8);
+const shortHash = (value: string) =>
+  NodeCrypto.createHash("sha256").update(value).digest("hex").slice(0, 8);
 
 /** LXD network names have at most 15 characters. */
-export const projectNetworkName = (projectId: string) => `t3m-${projectSuffix(projectId)}`;
+export const projectNetworkName = (projectId: string) => `t3m-${shortHash(projectId)}`;
 
-/** Every T3 project's machines share one LXD project, so each project's carry a suffix of their own. */
-export const machineInstanceName = (projectId: string, name: string) =>
-  `${name}-${projectSuffix(projectId)}`;
+/**
+ * Unique per lease, as are the disk names derived from it: a dev server on a copy of this
+ * environment's state has the same project ids, and must never name the real server's machines.
+ */
+export const machineInstanceName = (leaseId: string, name: string) =>
+  `${name}-${shortHash(leaseId)}`;
 
 /** Special-purpose IPv4 ranges machines never reach. */
 const BLOCKED_IPV4_RANGES: ReadonlyArray<readonly [address: string, prefix: number]> = [

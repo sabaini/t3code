@@ -404,45 +404,45 @@ export const makeLxdClient = Effect.fn("LxdClient.make")(function* (
 
     const open = (secret: string) =>
       Effect.acquireRelease(
-        Effect.callback<Undici.WebSocket, LxdUnreachableError>((resume) => {
-          const socket = new undici.WebSocket(
-            url(`${operationPath}/websocket`, { secret }, "wss").toString(),
-            { dispatcher: agent },
-          );
-          socket.binaryType = "arraybuffer";
-          socket.addEventListener("open", () => resume(Effect.succeed(socket)), { once: true });
-          socket.addEventListener(
-            "error",
-            () =>
-              resume(
-                Effect.fail(
-                  new LxdUnreachableError({ address, cause: new Error("Exec stream refused") }),
+        Effect.gen(function* () {
+          // The command can write before this side has seen every stream open, so output is
+          // queued from the moment each socket exists.
+          const queue = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+          const socket = yield* Effect.callback<Undici.WebSocket, LxdUnreachableError>((resume) => {
+            const socket = new undici.WebSocket(
+              url(`${operationPath}/websocket`, { secret }, "wss").toString(),
+              { dispatcher: agent },
+            );
+            socket.binaryType = "arraybuffer";
+            socket.addEventListener("message", (message) => {
+              Queue.offerUnsafe(queue, new Uint8Array(message.data as ArrayBuffer));
+            });
+            socket.addEventListener("close", () => Queue.endUnsafe(queue), { once: true });
+            socket.addEventListener("open", () => resume(Effect.succeed(socket)), {
+              once: true,
+            });
+            socket.addEventListener(
+              "error",
+              () =>
+                resume(
+                  Effect.fail(
+                    new LxdUnreachableError({ address, cause: new Error("Exec stream refused") }),
+                  ),
                 ),
-              ),
-            { once: true },
-          );
+              { once: true },
+            );
+            return Effect.sync(() => socket.close());
+          });
+          return { socket, output: Stream.fromQueue(queue) };
         }),
-        (socket) => Effect.sync(() => socket.close()),
+        ({ socket }) => Effect.sync(() => socket.close()),
       );
 
     // LXD starts the command only once every stream is connected.
-    const [, stdin, stdoutSocket, stderrSocket] = yield* Effect.all(
+    const [, { socket: stdin }, { output: stdout }, { output: stderr }] = yield* Effect.all(
       [open(fds.control), open(fds["0"]), open(fds["1"]), open(fds["2"])],
       { concurrency: "unbounded" },
     );
-
-    // Per exec stream and per chunk: the exec's own span covers them.
-    const output = Effect.fnUntraced(function* (socket: Undici.WebSocket) {
-      const queue = yield* Queue.unbounded<Uint8Array, Cause.Done>();
-      socket.addEventListener("message", (message) => {
-        Queue.offerUnsafe(queue, new Uint8Array(message.data as ArrayBuffer));
-      });
-      socket.addEventListener("close", () => Queue.endUnsafe(queue), { once: true });
-      return Stream.fromQueue(queue);
-    });
-
-    const stdout = yield* output(stdoutSocket);
-    const stderr = yield* output(stderrSocket);
 
     const write = Effect.fnUntraced(function* (chunk: Uint8Array) {
       // undici's WebSocket has no drain event, so a full buffer is polled until it empties.

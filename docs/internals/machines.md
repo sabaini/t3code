@@ -26,10 +26,11 @@ connecting.
 
 Each T3 project gets its own OVN network, so its machines reach each other and nothing of another
 project's. One shared ACL allows the network's own machines and public IPv4 ranges and rejects the
-rest, which covers the LAN, tailnets, cloud metadata, and the T3 Code host. OVN evaluates reject
-rules before allow rules, so the ACL can't list private ranges to reject: machines would lose each
-other too. It lists what's allowed, and the network's default rejects everything else. IPv6 is off
-because nothing filters it. A network lives on one LXD server, so all of a project's machines do
+rest, which covers the LAN, tailnets, cloud metadata, and a T3 Code host or LXD server on a private
+address. One with a public address is as reachable as the rest of the internet, unless its firewall
+says otherwise. OVN evaluates reject rules before allow rules, so the ACL can't list private ranges
+to reject: machines would lose each other too. It lists what's allowed, and the network's default
+rejects everything else. IPv6 is off because nothing filters it. A network lives on one LXD server, so all of a project's machines do
 too.
 
 A machine's own `eth0` replaces any its LXD profiles give it; a profile that adds a second NIC is

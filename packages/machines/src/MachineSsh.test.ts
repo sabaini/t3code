@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The shell itself checks how it splits a quoted path.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeNet from "node:net";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -11,7 +13,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import type { LxdExec } from "./lxd/LxdClient.ts";
-import { relaySshConnection, serveRelaySocket } from "./MachineSsh.ts";
+import { relaySshConnection, serveRelaySocket, shellWord } from "./MachineSsh.ts";
 
 /** Stands in for `nc` in the machine: answers in upper case, and exits once its input ends. */
 const upperCaseExec = Effect.gen(function* () {
@@ -43,6 +45,17 @@ const exchange = (socketPath: string, text: string) =>
     socket.on("error", (error) => resume(Effect.fail(error)));
     socket.write(text, () => socket.end());
   });
+
+it.each([
+  "/home/user/.t3/userdata/machines/p/0123abcd/ssh_config",
+  "/Users/user/Library/Application Support/t3/ssh_config",
+  "/tmp/it's here/ssh_config",
+])("passes %s to the shell as one word", (path) => {
+  const words = NodeChildProcess.execFileSync("sh", ["-c", `printf '%s\\0' ${shellWord(path)}`], {
+    encoding: "utf8",
+  });
+  assert.deepStrictEqual(words.split("\0").slice(0, -1), [path]);
+});
 
 describe("SSH relay", () => {
   it.live("carries bytes both ways and lets the client end its side first", () =>

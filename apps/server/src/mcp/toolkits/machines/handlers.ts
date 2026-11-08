@@ -8,6 +8,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import * as MachineService from "@t3tools/machines/MachineService";
+import { shellWord } from "@t3tools/machines/MachineSsh";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -53,7 +54,7 @@ function machineNext(
       case "ready":
         return [
           `Run commands on ${name} with: ${machine.sshCommand} '<command>'`,
-          `Use this exact -F config: it routes ssh through T3 Code and pins the machine's host key. Copy files with scp -F ${sshConfig}, or rsync -e 'ssh -F ${sshConfig}'.`,
+          `Use this exact -F config: it routes ssh through T3 Code and pins the machine's host key. Copy files with scp -F ${shellWord(sshConfig)}, or rsync -e ${shellWord(`ssh -F ${shellWord(sshConfig)}`)}.`,
           "You log in as ubuntu, with passwordless sudo.",
           `The project's other machines reach it as ${machine.dnsName}. It can reach the internet, but not the user's network.`,
           `It belongs to the project, so other threads can use it too. It stops after 4 hours without use, and ssh starts it again. It's deleted at ${machine.expiresAt}; ${release}`,

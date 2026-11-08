@@ -143,7 +143,7 @@ main() {
   [ "$(id -u)" -eq 0 ] || fail "Run this as root, for example with sudo."
   command -v snap >/dev/null || fail "This needs snapd, which Ubuntu comes with."
   export PATH=/snap/bin:$PATH
-  ! snap list microcloud >/dev/null 2>&1 || fail "This is a MicroCloud, which has LXD and OVN already. Use the commands in T3 Code's Settings → Integrations → Machines, under Connect server, instead."
+  ! snap list microcloud >/dev/null 2>&1 || fail "This is a MicroCloud, which has LXD and OVN already. Use the commands in T3 Code's Settings → Devices → Machines, under Connect server, instead."
   [ -e /dev/kvm ] || say "There's no /dev/kvm, so this server can run containers but not virtual machines."
 
   install_lxd
@@ -153,7 +153,7 @@ main() {
   token=$(new_token)
   cat <<EOF
 
-LXD $(lxd_version) with OVN is ready. In T3 Code, open Settings → Integrations → Machines, select Connect server,
+LXD $(lxd_version) with OVN is ready. In T3 Code, open Settings → Devices → Machines, select Connect server,
 and paste this token:
 
 $token

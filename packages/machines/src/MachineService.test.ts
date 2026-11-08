@@ -8,7 +8,9 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -67,6 +69,10 @@ function makeFakeLxd(
     readonly profiles?: Readonly<Record<string, ProfileDevices>>;
     readonly bootAfterProbes?: number;
     readonly failCreate?: boolean;
+    /** Replaces creating the instance, e.g. to hold LXD's operation open. */
+    readonly onCreate?: (post: Parameters<LxdClient["createInstance"]>[0]) => Effect.Effect<void>;
+    /** Runs before a start takes effect. */
+    readonly onStart?: Effect.Effect<void>;
   } = {},
 ) {
   const instances = new Map<string, FakeInstance>();
@@ -132,31 +138,38 @@ function makeFakeLxd(
       Effect.sync(() => void acls.set(name, put)).pipe(Effect.andThen(record(`createAcl ${name}`))),
     updateNetworkAcl: (name, put) => Effect.sync(() => void acls.set(name, put)),
     createInstance: (post) =>
-      options.failCreate
-        ? Effect.fail(
-            new LxdRequestError({
-              operation: "POST /1.0/instances",
-              status: 500,
-              reason: "Insufficient resources",
-            }),
-          )
-        : Effect.sync(() => {
-            instances.set(post.name, {
-              name: post.name,
-              type: post.type,
-              status: post.start ? "Running" : "Stopped",
-              config: post.config ?? {},
-              devices: post.devices ?? {},
-              probes: 0,
-            });
-          }).pipe(Effect.andThen(record(`createInstance ${post.name}`))),
+      options.onCreate
+        ? options.onCreate(post)
+        : options.failCreate
+          ? Effect.fail(
+              new LxdRequestError({
+                operation: "POST /1.0/instances",
+                status: 500,
+                reason: "Insufficient resources",
+              }),
+            )
+          : Effect.sync(() => {
+              instances.set(post.name, {
+                name: post.name,
+                type: post.type,
+                status: post.start ? "Running" : "Stopped",
+                config: post.config ?? {},
+                devices: post.devices ?? {},
+                probes: 0,
+              });
+            }).pipe(Effect.andThen(record(`createInstance ${post.name}`))),
     setInstanceState: (name, action) =>
-      Effect.sync(() => {
-        const instance = instances.get(name);
-        if (!instance) return;
-        instance.status = action === "start" ? "Running" : "Stopped";
-        instance.probes = 0;
-      }).pipe(Effect.andThen(record(`${action} ${name}`))),
+      (action === "start" && options.onStart ? options.onStart : Effect.void).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            const instance = instances.get(name);
+            if (!instance) return;
+            instance.status = action === "start" ? "Running" : "Stopped";
+            instance.probes = 0;
+          }),
+        ),
+        Effect.andThen(record(`${action} ${name}`)),
+      ),
     deleteInstance: (name) =>
       Effect.sync(() => void instances.delete(name)).pipe(
         Effect.andThen(record(`deleteInstance ${name}`)),
@@ -576,6 +589,95 @@ describe("MachineService", () => {
       yield* machines.sweep;
       assert.strictEqual(fake.instances.size, 0);
       assert.deepStrictEqual(yield* machines.list(PROJECT), []);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("never touches the machine of the state it was copied from", () => {
+    const fake = makeFakeLxd();
+    const real = makeLayer({ hosts: [["host-a", fake]], profiles: [CONTAINER] });
+    // A dev server on copied state: same environment and projects, no leases.
+    const copy = makeLayer({ hosts: [["host-a", fake]], profiles: [CONTAINER] });
+    return Effect.gen(function* () {
+      yield* MachineService.MachineService.pipe(
+        Effect.flatMap((machines) =>
+          machines.acquire({ ...BY, profile: "box", waitFor: "1 minute" }),
+        ),
+        Effect.provide(real.layer),
+      );
+      const original = [...fake.instances.keys()];
+      yield* Effect.gen(function* () {
+        const machines = yield* MachineService.MachineService;
+        const acquired = yield* machines.acquire({ ...BY, profile: "box", waitFor: "1 minute" });
+        assert.strictEqual(acquired.state, "ready");
+        yield* machines.release({ projectId: PROJECT, name: acquired.name });
+      }).pipe(Effect.provide(copy.layer));
+      assert.deepStrictEqual([...fake.instances.keys()], original);
+    });
+  });
+
+  it.effect("deletes a machine whose creation LXD finishes after its release", () => {
+    const accepted = Deferred.makeUnsafe<Parameters<LxdClient["createInstance"]>[0]>();
+    const fake = makeFakeLxd({
+      // LXD runs an accepted creation to the end, whether or not T3 still waits for it.
+      onCreate: (post) => Deferred.succeed(accepted, post).pipe(Effect.andThen(Effect.never)),
+    });
+    const { layer } = makeLayer({ hosts: [["host-a", fake]], profiles: [CONTAINER] });
+    return Effect.gen(function* () {
+      const machines = yield* MachineService.MachineService;
+      yield* machines.acquire({ ...BY, profile: "box" });
+      const post = yield* Deferred.await(accepted);
+      yield* machines.release({ projectId: PROJECT, name: "box-1" });
+      assert.strictEqual((yield* machines.list(PROJECT))[0]!.state, "releasing");
+
+      fake.instances.set(post.name, {
+        name: post.name,
+        type: post.type,
+        status: "Running",
+        config: post.config ?? {},
+        devices: post.devices ?? {},
+        probes: 0,
+      });
+      yield* machines.sweep;
+      assert.strictEqual(fake.instances.size, 0);
+      assert.deepStrictEqual(yield* machines.list(PROJECT), []);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("gives up on a released machine LXD never finished creating", () => {
+    const fake = makeFakeLxd({ onCreate: () => Effect.never });
+    const { layer } = makeLayer({ hosts: [["host-a", fake]], profiles: [CONTAINER] });
+    return Effect.gen(function* () {
+      const machines = yield* MachineService.MachineService;
+      yield* machines.acquire({ ...BY, profile: "box" });
+      yield* machines.release({ projectId: PROJECT, name: "box-1" });
+      yield* TestClock.adjust("10 minutes");
+      yield* machines.sweep;
+      assert.deepStrictEqual(yield* machines.list(PROJECT), []);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("starts a stopped machine once for connections that arrive together", () => {
+    const starting = Deferred.makeUnsafe<void>();
+    const finishStart = Deferred.makeUnsafe<void>();
+    const fake = makeFakeLxd({
+      onStart: Deferred.succeed(starting, undefined).pipe(
+        Effect.andThen(Deferred.await(finishStart)),
+      ),
+    });
+    const { layer } = makeLayer({ hosts: [["host-a", fake]], profiles: [CONTAINER] });
+    return Effect.gen(function* () {
+      const machines = yield* MachineService.MachineService;
+      yield* machines.acquire({ ...BY, profile: "box", waitFor: "1 minute" });
+      [...fake.instances.values()][0]!.status = "Stopped";
+      const first = yield* Effect.forkChild(machines.wait({ projectId: PROJECT, name: "box-1" }));
+      yield* Deferred.await(starting);
+      const second = yield* Effect.forkChild(machines.wait({ projectId: PROJECT, name: "box-1" }));
+      // The second either waits for the first's start or sends one of its own meanwhile.
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.succeed(finishStart, undefined);
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      assert.strictEqual(fake.calls.filter((call) => call.startsWith("start ")).length, 1);
     }).pipe(Effect.provide(layer));
   });
 
