@@ -59,7 +59,7 @@ import { ScopedSwitch } from "./ScopedSwitch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 const errorMessage = (error: unknown) =>
@@ -76,6 +76,7 @@ export function MachinesSettings() {
 }
 
 function AgentMachineAccessSetting() {
+  const searchableSetting = useSearchableSetting();
   const { scope } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -115,6 +116,7 @@ function AgentMachineAccessSetting() {
 }
 
 function MachineProfilesSetting() {
+  const searchableSetting = useSearchableSetting();
   const profiles = useScopedSettings((settings) => settings.machineProfiles);
   const updateSettings = useUpdateScopedSettings();
   const [editing, setEditing] = useState<{ readonly original: MachineProfile | null } | null>(null);
@@ -336,6 +338,7 @@ function MachineHostsSetting() {
 
 /** One line per environment: each connects its own servers, so none is picked for you. */
 function MachineHostsSummary() {
+  const searchableSetting = useSearchableSetting();
   const { scope, environments } = useSettingsScope();
   const [connecting, setConnecting] = useState<{
     readonly environmentId: EnvironmentId;
@@ -433,6 +436,7 @@ function MachineHostsSummaryLine({
 }
 
 function EnvironmentMachineHosts() {
+  const searchableSetting = useSearchableSetting();
   const { scope, environment } = useSettingsScope();
   const environmentId =
     environment?.connection.phase === "connected" && environment.serverConfig
