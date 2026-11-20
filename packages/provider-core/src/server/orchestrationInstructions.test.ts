@@ -75,6 +75,21 @@ describe("T3 device instructions", () => {
     assert.notInclude(laterRun(device), "## T3 Code devices");
     assert.notInclude(laterRun(none), T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim());
     assert.equal(laterRun({ device: true, machines: true }), "Check the login screen.");
+
+    // A provider's own guidance reaches a conversation that already had the rest.
+    const providerRun = (providerInstructionsDelivered: boolean) =>
+      t3OrchestrationPrompt({
+        prompt: "Check the login screen.",
+        hasT3Mcp: true,
+        tools: none,
+        orchestrationDelivered: true,
+        toolsDelivered: none,
+        providerInstructions: "Mark awaited shells.",
+        providerInstructionsDelivered,
+      });
+    assert.include(providerRun(false), "Mark awaited shells.");
+    assert.notInclude(providerRun(false), T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim());
+    assert.equal(providerRun(true), "Check the login screen.");
   });
 
   it("reach ACP agents again when device or machine access changes mid-thread", () => {

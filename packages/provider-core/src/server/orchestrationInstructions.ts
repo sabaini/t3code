@@ -156,13 +156,20 @@ export function t3OrchestrationPrompt(input: {
   readonly tools: T3GatedTools;
   readonly orchestrationDelivered: boolean;
   readonly toolsDelivered: T3GatedTools;
+  /** Guidance for this provider's own tools, sent until `providerInstructionsDelivered`. */
+  readonly providerInstructions?: string;
+  readonly providerInstructionsDelivered?: boolean;
 }): string {
   if (!input.hasT3Mcp) return input.prompt;
-  if (!input.orchestrationDelivered) {
-    return prependT3OrchestrationInstructions(input.prompt, orchestrationInstructions(input.tools));
-  }
-  const gated = t3GatedToolInstructions(input.tools, input.toolsDelivered);
-  return gated ? prependT3OrchestrationInstructions(input.prompt, gated) : input.prompt;
+  const instructions = [
+    !input.orchestrationDelivered
+      ? orchestrationInstructions(input.tools)
+      : t3GatedToolInstructions(input.tools, input.toolsDelivered) || undefined,
+    input.providerInstructionsDelivered === true ? undefined : input.providerInstructions,
+  ].flatMap((part) => (part === undefined ? [] : [part.trim()]));
+  return instructions.length === 0
+    ? input.prompt
+    : prependT3OrchestrationInstructions(input.prompt, instructions.join("\n\n"));
 }
 
 export function t3OrchestrationSystemPrompt(

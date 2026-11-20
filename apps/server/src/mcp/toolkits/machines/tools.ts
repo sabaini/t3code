@@ -7,7 +7,7 @@ import {
   MachineToolNameInput,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
 
 import * as MachineService from "@t3tools/machines/MachineService";
@@ -35,7 +35,8 @@ const MachineListTool = Tool.make("machine_list", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const MachineAcquireTool = Tool.make("machine_acquire", {
   description:
@@ -49,7 +50,8 @@ const MachineAcquireTool = Tool.make("machine_acquire", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const MachineWaitTool = Tool.make("machine_wait", {
   description: "Wait up to 40 seconds for a machine to be ready, starting it if it's stopped.",
@@ -62,7 +64,8 @@ const MachineWaitTool = Tool.make("machine_wait", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const MachineReleaseTool = Tool.make("machine_release", {
   description: "Delete a machine and its disks.",
@@ -77,7 +80,8 @@ const MachineReleaseTool = Tool.make("machine_release", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const MachineToolkit = Toolkit.make(
   MachineListTool,
